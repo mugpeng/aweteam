@@ -1,0 +1,39 @@
+{
+  "leader": {
+    "name": "main",
+    "provider": "claude",
+    "command": "claude",
+    "model": "sonnet"
+  },
+  "default_workers": [
+    "cc-glm",
+    "codex",
+    "claudecode-official"
+  ],
+  "worker_profiles": {
+    "cc-glm": {
+      "provider": "claude",
+      "command": "claude",
+      "model": "glm-4.6",
+      "max_instances": 2,
+      "env": {
+        "ANTHROPIC_BASE_URL": "${GLM_ANTHROPIC_BASE_URL}",
+        "ANTHROPIC_AUTH_TOKEN": "${GLM_ANTHROPIC_AUTH_TOKEN}",
+        "ANTHROPIC_MODEL": "glm-4.6"
+      }
+    },
+    "codex": {
+      "provider": "codex",
+      "command": "codex",
+      "model": "gpt-5.3-codex",
+      "max_instances": 2
+    },
+    "claudecode-official": {
+      "provider": "claude",
+      "command": "claude",
+      "model": "sonnet",
+      "max_instances": 1
+    }
+  }
+}
+

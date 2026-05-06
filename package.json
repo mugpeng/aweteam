@@ -1,0 +1,16 @@
+{
+  "name": "aweteam",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "aweteam": "./bin/aweteam.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
