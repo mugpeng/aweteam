@@ -202,16 +202,10 @@ function normalizeLeaderPolicy(policy = {}) {
 
 export function buildWorkerCommand(profile, taskPath) {
   if (profile.provider === "claude") {
-    return buildCommand(profile, {
-      beforeModel: ["-p"],
-      afterModel: ["--output-format", "text", "<", taskPath],
-    });
+    return buildCommand(profile, ["-p", "--output-format", "text", "<", taskPath]);
   }
   if (profile.provider === "codex") {
-    return buildCommand(profile, {
-      beforeModel: ["exec", "--skip-git-repo-check"],
-      afterModel: ["--json", "-", "<", taskPath],
-    });
+    return buildCommand(profile, ["exec", "--skip-git-repo-check", "--json", "-", "<", taskPath]);
   }
   return buildCommand(profile, taskPath ? ["<", taskPath] : null);
 }
@@ -325,22 +319,13 @@ function resolveEnvValue(value, key) {
   return resolved;
 }
 
-function buildCommand(profile, suffix) {
-  const words = [];
-  words.push(shellQuote(profile.command));
+function buildCommand(profile, args) {
+  const words = [shellQuote(profile.command)];
   if (profile.env && Object.keys(profile.env).length > 0) {
-    const settingsJson = JSON.stringify({ env: profile.env });
-    words.push("--settings", shellQuote(settingsJson));
+    words.push("--settings", shellQuote(JSON.stringify({ env: profile.env })));
   }
-  const beforeModel = Array.isArray(suffix?.beforeModel) ? suffix.beforeModel : [];
-  words.push(...beforeModel.map(shellQuoteShellOperatorAware));
-  if (profile.model) {
-    words.push("--model", shellQuote(profile.model));
-  }
-  if (Array.isArray(suffix?.afterModel)) {
-    words.push(...suffix.afterModel.map(shellQuoteShellOperatorAware));
-  } else if (Array.isArray(suffix)) {
-    words.push(...suffix.map(shellQuoteShellOperatorAware));
+  if (Array.isArray(args)) {
+    words.push(...args.map(shellQuoteShellOperatorAware));
   }
   return words.join(" ");
 }

@@ -127,7 +127,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "-n",
     "leader-main",
   ]);
-  assert.match(tmuxCalls[0][6], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
+  assert.match(tmuxCalls[0][6], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
   assert.match(tmuxCalls[0][6], /Default worker pool:/);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
@@ -165,7 +165,7 @@ test("buildLeaderCommand disables Claude native subagents", () => {
     env: {},
   }, "leader rules");
 
-  assert.equal(command, "claude --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt 'leader rules'");
+  assert.equal(command, "claude --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt 'leader rules'");
 });
 
 test("buildWorkerCommand uses provider-specific non-interactive commands", () => {
@@ -176,7 +176,7 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
       model: "glm-4.6",
       env: {},
     }, "/tmp/task.md"),
-    "claude -p --model glm-4.6 --output-format text < /tmp/task.md",
+    "claude -p --output-format text < /tmp/task.md",
   );
 
   assert.equal(
@@ -186,7 +186,7 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
       model: "gpt-5.4",
       env: {},
     }, "/tmp/task.md"),
-    "codex exec --skip-git-repo-check --model gpt-5.4 --json - < /tmp/task.md",
+    "codex exec --skip-git-repo-check --json - < /tmp/task.md",
   );
 });
 
@@ -320,7 +320,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-P",
     "-F",
     "#{pane_id}",
-    "claude -p --model glm-4.6 --output-format text < " + join(worker.dir, "task.md"),
+    "claude -p --output-format text < " + join(worker.dir, "task.md"),
   ]);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
