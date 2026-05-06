@@ -57,6 +57,24 @@ test("run command creates a run without attaching when requested", async () => {
   assert.equal(runJson.task, "ship it");
 });
 
+test("help output documents workflow and examples", async () => {
+  const output = [];
+  const exitCode = await runCli({
+    argv: ["--help"],
+    stdout: (line) => output.push(line),
+    stderr: (line) => output.push(line),
+    tmux: async () => ({ stdout: "", stderr: "", status: 0 }),
+  });
+
+  const text = output.join("\n");
+  assert.equal(exitCode, 0);
+  assert.match(text, /Usage:/);
+  assert.match(text, /Workflow:/);
+  assert.match(text, /Examples:/);
+  assert.match(text, /aweteam --config aweteam.json/);
+  assert.match(text, /aweteam status <run-id>/);
+});
+
 test("default command starts a run with generated topic", async () => {
   const dir = await tempDir();
   const configPath = await writeConfig(dir);
@@ -79,6 +97,29 @@ test("default command starts a run with generated topic", async () => {
   const instructions = await readFile(join(dir, ".aweteam", "runs", "default-run", "leader", "instructions.md"), "utf8");
   assert.match(instructions, /Initial topic:/);
   assert.match(instructions, /aweteam leader session/);
+});
+
+test("default command does not attach when stdout is not a terminal", async () => {
+  const dir = await tempDir();
+  const configPath = await writeConfig(dir);
+  const tmuxCalls = [];
+  const output = [];
+
+  const exitCode = await runCli({
+    argv: ["--config", configPath, "--run-id", "non-tty-run"],
+    cwd: dir,
+    isTTY: false,
+    stdout: (line) => output.push(line),
+    stderr: (line) => output.push(line),
+    tmux: async (args) => {
+      tmuxCalls.push(args);
+      return { stdout: "%1\n", stderr: "", status: 0 };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(tmuxCalls.some((args) => args[0] === "attach-session"), false);
+  assert.match(output.join("\n"), /attach: tmux attach -t aweteam-non-tty-run/);
 });
 
 test("status command prints run and worker pane metadata", async () => {

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -9,8 +9,6 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 export async function loadConfig(configPath) {
   const raw = await readFile(configPath, "utf8");
@@ -44,7 +42,7 @@ export async function createRun(options) {
   const task = options.task ?? "";
   const instructions = renderLeaderInstructions({ runId, config, task });
   const resolvedConfig = { ...config, config_path: configPath };
-  const leaderCommand = buildLeaderCommand(config.leader);
+  const leaderCommand = buildLeaderCommand(config.leader, instructions);
   const pane = await tmuxOrThrow(options.tmux, [
     "new-session",
     "-d",
@@ -182,8 +180,12 @@ export async function statusRun({ runId, cwd = process.cwd() }) {
   return JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
 }
 
-export function buildLeaderCommand(profile) {
-  return buildCommand(profile, null);
+export function buildLeaderCommand(profile, instructions) {
+  const extraArgs = [];
+  if (profile.provider === "claude" && instructions) {
+    extraArgs.push("--append-system-prompt", instructions);
+  }
+  return buildCommand(profile, extraArgs);
 }
 
 export function buildWorkerCommand(profile, taskPath) {
@@ -200,16 +202,39 @@ async function tmuxOrThrow(tmux, args) {
 }
 
 async function realTmux(args) {
-  try {
-    const { stdout, stderr } = await execFileAsync("tmux", args);
-    return { stdout, stderr, status: 0 };
-  } catch (error) {
-    return {
-      stdout: error.stdout ?? "",
-      stderr: error.stderr ?? error.message,
-      status: typeof error.code === "number" ? error.code : 1,
-    };
-  }
+  const runner = createRealTmuxRunner();
+  return runner(args);
+}
+
+export function createRealTmuxRunner({ execFile: execFileImpl = execFile, spawn: spawnImpl = spawn } = {}) {
+  const execFileAsyncImpl = promisify(execFileImpl);
+  return async function runTmux(args) {
+    if (args[0] === "attach-session") {
+      return runTmuxAttached(spawnImpl, args);
+    }
+    try {
+      const { stdout, stderr } = await execFileAsyncImpl("tmux", args);
+      return { stdout, stderr, status: 0 };
+    } catch (error) {
+      return {
+        stdout: error.stdout ?? "",
+        stderr: error.stderr ?? error.message,
+        status: typeof error.code === "number" ? error.code : 1,
+      };
+    }
+  };
+}
+
+function runTmuxAttached(spawnImpl, args) {
+  return new Promise((resolve) => {
+    const child = spawnImpl("tmux", args, { stdio: "inherit" });
+    child.on("error", (error) => {
+      resolve({ stdout: "", stderr: error.message, status: 1 });
+    });
+    child.on("close", (code) => {
+      resolve({ stdout: "", stderr: "", status: code ?? 0 });
+    });
+  });
 }
 
 async function pipePane(tmux, paneId, logPath) {

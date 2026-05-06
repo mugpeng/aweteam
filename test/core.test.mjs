@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import test from "node:test";
 
 import {
   createRun,
+  createRealTmuxRunner,
   loadConfig,
   spawnWorker,
 } from "../src/core.mjs";
@@ -122,7 +124,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "aweteam-run-test",
     "-n",
     "leader-main",
-    "ANTHROPIC_MODEL=sonnet claude --model sonnet",
+    "ANTHROPIC_MODEL=sonnet claude --model sonnet --append-system-prompt " + shellQuote(await readFile(join(run.runDir, "leader", "instructions.md"), "utf8")),
   ]);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
@@ -131,6 +133,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "%1",
     "cat >> " + shellQuote(join(run.runDir, "leader", "stdout.log")),
   ]);
+  assert.equal(tmuxCalls.length, 2);
 
   const runJson = JSON.parse(await readFile(join(run.runDir, "run.json"), "utf8"));
   assert.equal(runJson.leader.pane, "%1");
@@ -143,6 +146,32 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
   const resolved = JSON.parse(await readFile(join(run.runDir, "config.resolved.json"), "utf8"));
   assert.equal(resolved.leader.role, "leader");
   assert.equal(resolved.worker_profiles.codex.role, "worker");
+});
+
+test("real tmux runner attaches with inherited terminal stdio", async () => {
+  const spawnCalls = [];
+  const runner = createRealTmuxRunner({
+    spawn: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    },
+    execFile: async () => {
+      throw new Error("attach should not use execFile");
+    },
+  });
+
+  const result = await runner(["attach-session", "-t", "aweteam-test"]);
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(spawnCalls, [{
+    command: "tmux",
+    args: ["attach-session", "-t", "aweteam-test"],
+    options: { stdio: "inherit" },
+  }]);
 });
 
 test("spawnWorker rejects profiles outside default_workers", async () => {
