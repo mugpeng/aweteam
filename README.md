@@ -19,6 +19,11 @@ aweteam status <run-id>
 plan. It only accepts profiles listed in `default_workers` and enforces each
 profile's `max_instances`.
 
+For Claude Code leaders, aweteam starts the leader with native `Task` delegation
+disabled and injects instructions that "agent" means an aweteam tmux worker
+pane. This keeps Claude Code's internal Explore/Task agents from substituting
+for aweteam workers.
+
 ## Config
 
 The MVP config format is JSON:

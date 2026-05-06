@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import {
+  buildLeaderCommand,
+  buildWorkerCommand,
   createRun,
   createRealTmuxRunner,
   loadConfig,
@@ -117,15 +119,16 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
 
   assert.equal(run.runId, "run-test");
   assert.equal(run.sessionName, "aweteam-run-test");
-  assert.deepEqual(tmuxCalls[0], [
+  assert.deepEqual(tmuxCalls[0].slice(0, 6), [
     "new-session",
     "-d",
     "-s",
     "aweteam-run-test",
     "-n",
     "leader-main",
-    "ANTHROPIC_MODEL=sonnet claude --model sonnet --append-system-prompt " + shellQuote(await readFile(join(run.runDir, "leader", "instructions.md"), "utf8")),
   ]);
+  assert.match(tmuxCalls[0][6], /^ANTHROPIC_MODEL=sonnet claude --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
+  assert.match(tmuxCalls[0][6], /Default worker pool:/);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
     "-o",
@@ -142,10 +145,49 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
   const instructions = await readFile(join(run.runDir, "leader", "instructions.md"), "utf8");
   assert.match(instructions, /default worker pool/i);
   assert.match(instructions, /aweteam spawn/);
+  assert.match(instructions, /Do not use Claude Code native Task/);
+  assert.match(instructions, /coordinator-only leader/);
+  assert.match(instructions, /Do not execute the user task yourself/);
 
   const resolved = JSON.parse(await readFile(join(run.runDir, "config.resolved.json"), "utf8"));
   assert.equal(resolved.leader.role, "leader");
+  assert.equal(resolved.leader_policy.mode, "delegate_only");
+  assert.equal(resolved.leader_policy.plan_approval_required, true);
+  assert.equal(resolved.leader_policy.native_subagents, "disallow");
   assert.equal(resolved.worker_profiles.codex.role, "worker");
+});
+
+test("buildLeaderCommand disables Claude native subagents", () => {
+  const command = buildLeaderCommand({
+    provider: "claude",
+    command: "claude",
+    model: "sonnet",
+    env: {},
+  }, "leader rules");
+
+  assert.equal(command, "claude --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt 'leader rules'");
+});
+
+test("buildWorkerCommand uses provider-specific non-interactive commands", () => {
+  assert.equal(
+    buildWorkerCommand({
+      provider: "claude",
+      command: "claude",
+      model: "glm-4.6",
+      env: {},
+    }, "/tmp/task.md"),
+    "claude -p --model glm-4.6 --output-format text < /tmp/task.md",
+  );
+
+  assert.equal(
+    buildWorkerCommand({
+      provider: "codex",
+      command: "codex",
+      model: "gpt-5.4",
+      env: {},
+    }, "/tmp/task.md"),
+    "codex exec --skip-git-repo-check --model gpt-5.4 --json - < /tmp/task.md",
+  );
 });
 
 test("real tmux runner attaches with inherited terminal stdio", async () => {
@@ -278,7 +320,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-P",
     "-F",
     "#{pane_id}",
-    "claude --model glm-4.6 < " + join(worker.dir, "task.md"),
+    "claude -p --model glm-4.6 --output-format text < " + join(worker.dir, "task.md"),
   ]);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");

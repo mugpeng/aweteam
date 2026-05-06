@@ -155,6 +155,9 @@ Startup behavior:
 - The leader pane runs the configured leader command directly.
 - aweteam injects or provides leader instructions explaining the worker creation
   protocol and the allowed worker pool.
+- For Claude Code leaders, aweteam disables native `Task` delegation and tells
+  the leader that "agent" means an aweteam tmux worker pane, not Claude Code's
+  internal Explore/Task subagents.
 
 User interaction:
 
@@ -193,6 +196,16 @@ Each adapter should expose only the operations needed for the MVP:
 - `spawnPane`: create a tmux pane running the built command.
 
 The provider role is not inferred from the adapter. Role comes from config.
+
+Current command-building policy:
+
+- Claude leaders run interactively with `--append-system-prompt` and
+  `--disallowedTools Task`.
+- Claude workers run non-interactively with `claude -p --output-format text`
+  and read the task file from stdin.
+- Codex workers run non-interactively with `codex exec --json -` and read the
+  task file from stdin.
+- Unknown/custom providers keep the generic command plus stdin task handoff.
 
 ## MVP Execution Flow
 

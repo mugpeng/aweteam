@@ -22,6 +22,7 @@ export async function loadConfig(configPath) {
 
   return {
     leader: normalizeProfile(parsed.leader.name ?? "main", parsed.leader, "leader"),
+    leader_policy: normalizeLeaderPolicy(parsed.leader_policy),
     default_workers: [...parsed.default_workers],
     worker_profiles: workerProfiles,
   };
@@ -182,14 +183,37 @@ export async function statusRun({ runId, cwd = process.cwd() }) {
 
 export function buildLeaderCommand(profile, instructions) {
   const extraArgs = [];
+  if (profile.provider === "claude") {
+    extraArgs.push("--disallowedTools", "Task,Edit,MultiEdit,NotebookEdit,Write");
+  }
   if (profile.provider === "claude" && instructions) {
     extraArgs.push("--append-system-prompt", instructions);
   }
   return buildCommand(profile, extraArgs);
 }
 
+function normalizeLeaderPolicy(policy = {}) {
+  return {
+    mode: policy.mode ?? "delegate_only",
+    plan_approval_required: policy.plan_approval_required ?? true,
+    native_subagents: policy.native_subagents ?? "disallow",
+  };
+}
+
 export function buildWorkerCommand(profile, taskPath) {
-  return `${buildCommand(profile, taskPath ? ["<", taskPath] : null)}`;
+  if (profile.provider === "claude") {
+    return buildCommand(profile, {
+      beforeModel: ["-p"],
+      afterModel: ["--output-format", "text", "<", taskPath],
+    });
+  }
+  if (profile.provider === "codex") {
+    return buildCommand(profile, {
+      beforeModel: ["exec", "--skip-git-repo-check"],
+      afterModel: ["--json", "-", "<", taskPath],
+    });
+  }
+  return buildCommand(profile, taskPath ? ["<", taskPath] : null);
 }
 
 async function tmuxOrThrow(tmux, args) {
@@ -307,10 +331,14 @@ function buildCommand(profile, suffix) {
     words.push(`${key}=${shellQuote(String(value))}`);
   }
   words.push(shellQuote(profile.command));
+  const beforeModel = Array.isArray(suffix?.beforeModel) ? suffix.beforeModel : [];
+  words.push(...beforeModel.map(shellQuoteShellOperatorAware));
   if (profile.model) {
     words.push("--model", shellQuote(profile.model));
   }
-  if (Array.isArray(suffix)) {
+  if (Array.isArray(suffix?.afterModel)) {
+    words.push(...suffix.afterModel.map(shellQuoteShellOperatorAware));
+  } else if (Array.isArray(suffix)) {
     words.push(...suffix.map(shellQuoteShellOperatorAware));
   }
   return words.join(" ");
@@ -344,6 +372,10 @@ ${task || "(none)"}
 
 aweteam is a thin handoff interface. It does not split tasks, infer approval, or
 summarize worker results. You are the leader/main agent.
+
+You are a coordinator-only leader. Do not execute the user task yourself. Your job is to understand the request, propose a worker allocation plan, wait for explicit user confirmation, then create aweteam worker panes.
+
+In aweteam, "agent" means an aweteam tmux worker pane only. Do not use Claude Code native Task, Explore, or subagent tools as substitutes for aweteam workers.
 
 Default worker pool:
 ${pool}
