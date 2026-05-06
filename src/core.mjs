@@ -327,10 +327,11 @@ function resolveEnvValue(value, key) {
 
 function buildCommand(profile, suffix) {
   const words = [];
-  for (const [key, value] of Object.entries(profile.env ?? {})) {
-    words.push(`${key}=${shellQuote(String(value))}`);
-  }
   words.push(shellQuote(profile.command));
+  if (profile.env && Object.keys(profile.env).length > 0) {
+    const settingsJson = JSON.stringify({ env: profile.env });
+    words.push("--settings", shellQuote(settingsJson));
+  }
   const beforeModel = Array.isArray(suffix?.beforeModel) ? suffix.beforeModel : [];
   words.push(...beforeModel.map(shellQuoteShellOperatorAware));
   if (profile.model) {

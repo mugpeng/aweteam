@@ -127,7 +127,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "-n",
     "leader-main",
   ]);
-  assert.match(tmuxCalls[0][6], /^ANTHROPIC_MODEL=sonnet claude --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
+  assert.match(tmuxCalls[0][6], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --model sonnet --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
   assert.match(tmuxCalls[0][6], /Default worker pool:/);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
