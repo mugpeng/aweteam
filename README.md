@@ -16,6 +16,7 @@ aweteam status <run-id>
 aweteam status <run-id> --watch
 aweteam focus <run-id> <leader|worker-name|profile>
 aweteam summarize <run-id>
+aweteam collect-summary <run-id>
 ```
 
 `spawn` is the small local protocol used by the leader after the user confirms a
@@ -33,9 +34,12 @@ injected as shell environment variables rather than `--settings`.
 
 Each run is a tmux team console. The leader pane is selected by `prefix+1`, and
 worker panes are selected by `prefix+2` through `prefix+9` as they are spawned.
+Worker panes stay open after the worker command finishes so their output remains
+visible in tmux.
 `aweteam status` refreshes worker completion state and extracts `result.md`;
 `aweteam summarize` sends collected worker results back to the leader pane for
-final synthesis.
+final synthesis; `aweteam collect-summary` captures the leader pane into
+`leader/summary.md`.
 
 ## Config
 
@@ -129,6 +133,12 @@ After workers finish, ask the leader to synthesize results:
 aweteam summarize <run-id>
 ```
 
+After the leader answers, persist the final visible leader summary:
+
+```bash
+aweteam collect-summary <run-id>
+```
+
 ## Operation Example
 
 This example assumes `aweteam.json` contains:
@@ -185,8 +195,11 @@ aweteam spawn --run-id <run-id> --profile cc-gemini --task-file .aweteam/runs/<r
 aweteam spawn --run-id <run-id> --profile codex-gpt5.4-mini --task-file .aweteam/runs/<run-id>/tasks/login-review.md
 ```
 
-aweteam validates each profile against `default_workers`, checks
-`max_instances`, and creates `worker-1`, `worker-2`, and `worker-3` tmux panes.
+This profile plus task-file pair is the assignment protocol: the leader controls
+which configured worker gets which task by choosing the profile and writing that
+worker's task file. aweteam validates each profile against `default_workers`,
+checks `max_instances`, and creates `worker-1`, `worker-2`, and `worker-3` tmux
+panes.
 
 From another terminal:
 
@@ -205,3 +218,5 @@ worker-1    cc-glm       done       %1
 worker-2    cc-gemini    running    %2
 worker-3    codex-gpt5.4-mini    done       %3
 ```
+
+Completed workers also include a `result=<path>` field in status output.

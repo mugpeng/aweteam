@@ -1,5 +1,6 @@
 import {
   createRun,
+  collectLeaderSummary,
   defaultConfigPath,
   displayRunStatus,
   focusRunPane,
@@ -75,6 +76,14 @@ export async function runCli({
       if (!runId) throw new Error("summarize requires <run-id>");
       await summarizeRun({ runId, cwd, tmux });
       stdout(`summary requested: ${runId}`);
+      return 0;
+    }
+    if (command === "collect-summary") {
+      const runId = argv[1];
+      if (!runId) throw new Error("collect-summary requires <run-id>");
+      const summary = await collectLeaderSummary({ runId, cwd, tmux });
+      stdout(`summary: .aweteam/runs/${runId}/leader/summary.md`);
+      if (summary) stdout(summary);
       return 0;
     }
     throw new Error(`unknown command: ${command}`);
@@ -161,6 +170,7 @@ Usage:
   aweteam status <run-id>
   aweteam focus <run-id> <leader|worker-name|profile>
   aweteam summarize <run-id>
+  aweteam collect-summary <run-id>
 
 Workflow:
   1. Configure one leader and a default worker pool in aweteam.json.
@@ -190,6 +200,9 @@ Commands:
 
   aweteam summarize <run-id>
       Send collected worker results back to the leader pane for final synthesis.
+
+  aweteam collect-summary <run-id>
+      Capture the leader pane and persist it to leader/summary.md.
 
 Examples:
   aweteam --config aweteam.json

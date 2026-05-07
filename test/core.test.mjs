@@ -12,6 +12,7 @@ import {
   createRealTmuxRunner,
   loadConfig,
   refreshRunStatus,
+  collectLeaderSummary,
   spawnWorker,
   summarizeRun,
 } from "../src/core.mjs";
@@ -129,8 +130,9 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "-n",
     "leader-main",
   ]);
-  assert.match(tmuxCalls[0][6], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
-  assert.match(tmuxCalls[0][6], /Default worker pool:/);
+  assert.deepEqual(tmuxCalls[0].slice(6, 9), ["-P", "-F", "#{pane_id}"]);
+  assert.match(tmuxCalls[0][9], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
+  assert.match(tmuxCalls[0][9], /Default worker pool:/);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
     "-o",
@@ -205,6 +207,42 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
     }, "/tmp/task.md"),
     "HTTPS_PROXY=http://127.0.0.1:7890 codex exec --skip-git-repo-check --model gpt-5.4-mini --json - < /tmp/task.md",
   );
+});
+
+test("spawnWorker wraps worker command so the tmux pane remains after completion", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "persist-pane",
+    attach: false,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%1\n", stderr: "", status: 0 };
+    },
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "cc-glm",
+    taskFile,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%2\n", stderr: "", status: 0 };
+    },
+  });
+
+  const split = calls.find((args) => args[0] === "split-window");
+  assert.match(split.at(-1), /^\/bin\/zsh -lc /);
+  assert.match(split.at(-1), /worker finished with exit/);
+  assert.match(split.at(-1), /exec "\$\{SHELL:-\/bin\/zsh\}"/);
+  assert.match(split.at(-1), /exit-code\.txt/);
 });
 
 test("createRun configures a tmux team console", async () => {
@@ -293,13 +331,16 @@ test("refreshRunStatus extracts completed codex result from worker stdout", asyn
     JSON.stringify({ type: "turn.completed" }),
     "",
   ].join("\n"), "utf8");
+  await writeFile(join(worker.dir, "exit-code.txt"), "0\n", "utf8");
+  const calls = [];
 
   await refreshRunStatus({
     runId: run.runId,
     cwd: dir,
     tmux: async (args) => {
+      calls.push(args);
       if (args[0] === "display-message") {
-        return { stdout: "1\n", stderr: "", status: 0 };
+        return { stdout: "0\n", stderr: "", status: 0 };
       }
       return { stdout: "", stderr: "", status: 0 };
     },
@@ -308,6 +349,13 @@ test("refreshRunStatus extracts completed codex result from worker stdout", asyn
   const status = JSON.parse(await readFile(join(worker.dir, "status.json"), "utf8"));
   assert.equal(status.state, "done");
   assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "codex result text\n");
+  assert.deepEqual(calls.find((args) => args[0] === "select-pane" && args.at(-1).endsWith("done")), [
+    "select-pane",
+    "-t",
+    "%2",
+    "-T",
+    "worker-1 codex done",
+  ]);
 });
 
 test("refreshRunStatus extracts completed claude text and strips terminal controls", async () => {
@@ -330,7 +378,8 @@ test("refreshRunStatus extracts completed claude text and strips terminal contro
     cwd: dir,
     tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
   });
-  await writeFile(join(worker.dir, "stdout.log"), "claude result text\n\u001b[?25h\u001b7\u001b8", "utf8");
+  await writeFile(join(worker.dir, "stdout.log"), "claude result text\n\n[aweteam] worker finished with exit 0\n% peng@host %\n\u001b[?25h\u001b7\u001b8", "utf8");
+  await writeFile(join(worker.dir, "exit-code.txt"), "0\n", "utf8");
 
   await refreshRunStatus({
     runId: run.runId,
@@ -341,7 +390,7 @@ test("refreshRunStatus extracts completed claude text and strips terminal contro
   assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "claude result text\n");
 });
 
-test("summarizeRun sends collected worker results to the leader pane", async () => {
+test("summarizeRun sends a summary-input path to the leader pane instead of the full payload", async () => {
   const dir = await tempDir();
   const configPath = await writeJsonConfig(dir, sampleConfig());
   const calls = [];
@@ -384,8 +433,49 @@ test("summarizeRun sends collected worker results to the leader pane", async () 
   assert.match(summary, /worker-1 \(codex\)/);
   assert.match(summary, /worker result/);
   assert.deepEqual(calls.at(-2).slice(0, 5), ["send-keys", "-t", "%1", "-l", "--"]);
+  assert.match(calls.at(-2).at(-1), /summary-input\.md/);
+  assert.doesNotMatch(calls.at(-2).at(-1), /worker result\n/);
   assert.deepEqual(calls.at(-1), ["send-keys", "-t", "%1", "Enter"]);
   assert.equal(await readFile(join(run.runDir, "leader", "summary-input.md"), "utf8"), summary);
+});
+
+test("collectLeaderSummary captures leader pane output into a durable summary file", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "collect-summary",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+
+  const summary = await collectLeaderSummary({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      assert.deepEqual(args, ["capture-pane", "-t", "%1", "-p", "-S", "-500"]);
+      return { stdout: [
+        "❯ Please synthesize the aweteam worker results",
+        "  Read the merged worker results from: /tmp/summary-input.md",
+        "",
+        "  Read 1 file (ctrl+o to expand)",
+        "",
+        "\u001b[?25h⏺ Final summary",
+        "",
+        "  Overall verdict: pass",
+        "",
+        "⏺ Bash(aweteam collect-summary collect-summary)",
+        "  ⎿  Running…",
+        "────────────────────────────────",
+        "❯ ",
+      ].join("\n"), stderr: "", status: 0 };
+    },
+  });
+
+  assert.equal(summary, "Final summary\n\nOverall verdict: pass\n");
+  assert.equal(await readFile(join(run.runDir, "leader", "summary.md"), "utf8"), summary);
 });
 
 test("real tmux runner attaches with inherited terminal stdio", async () => {
@@ -511,15 +601,17 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "%2",
     "cat >> " + shellQuote(join(worker.dir, "stdout.log")),
   ]);
-  assert.deepEqual(calls.find((args) => args[0] === "split-window"), [
+  const split = calls.find((args) => args[0] === "split-window");
+  assert.deepEqual(split.slice(0, 6), [
     "split-window",
     "-t",
     "aweteam-spawn-ok",
     "-P",
     "-F",
     "#{pane_id}",
-    "claude -p --output-format text < " + join(worker.dir, "task.md"),
   ]);
+  assert.match(split.at(-1), /claude -p --output-format text < /);
+  assert.match(split.at(-1), /worker finished with exit/);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
   const profile = JSON.parse(await readFile(join(worker.dir, "profile.json"), "utf8"));

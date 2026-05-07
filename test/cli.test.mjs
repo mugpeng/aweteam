@@ -192,5 +192,5 @@ test("focus command selects leader or worker panes", async () => {
   });
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(calls, [["select-pane", "-t", "%2"]]);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["select-pane", "-t", "%2"])), true);
 });

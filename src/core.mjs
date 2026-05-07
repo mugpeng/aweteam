@@ -52,6 +52,9 @@ export async function createRun(options) {
     sessionName,
     "-n",
     "leader-main",
+    "-P",
+    "-F",
+    "#{pane_id}",
     leaderCommand,
   ]);
   const leaderPane = pane.stdout.trim() || "leader-main";
@@ -142,6 +145,7 @@ export async function spawnWorker(options) {
     await writeFile(join(workerDir, "result.md"), "", "utf8");
 
     const workerCommand = buildWorkerCommand(profile, join(workerDir, "task.md"));
+    const paneCommand = buildPersistentWorkerPaneCommand(workerCommand, join(workerDir, "exit-code.txt"));
     const pane = await tmuxOrThrow(options.tmux, [
       "split-window",
       "-t",
@@ -149,7 +153,7 @@ export async function spawnWorker(options) {
       "-P",
       "-F",
       "#{pane_id}",
-      workerCommand,
+      paneCommand,
     ]);
     const paneId = pane.stdout.trim() || workerName;
     await pipePane(options.tmux, paneId, join(workerDir, "stdout.log"));
@@ -197,7 +201,7 @@ export async function statusRun({ runId, cwd = process.cwd(), tmux } = {}) {
 }
 
 export async function focusRunPane({ runId, target, cwd = process.cwd(), tmux }) {
-  const run = await statusRun({ runId, cwd });
+  const run = await statusRun({ runId, cwd, tmux });
   const pane = target === "leader"
     ? run.leader.pane
     : run.workers.find((worker) => worker.name === target || worker.profile === target)?.pane;
@@ -227,8 +231,15 @@ export async function summarizeRun({ runId, cwd = process.cwd(), tmux } = {}) {
     ...sections,
     "",
   ].join("\n");
-  await writeFile(join(runDir, "leader", "summary-input.md"), summaryInput, "utf8");
-  await tmuxOrThrow(tmux, ["send-keys", "-t", run.leader.pane, "-l", "--", summaryInput]);
+  const summaryInputPath = join(runDir, "leader", "summary-input.md");
+  await writeFile(summaryInputPath, summaryInput, "utf8");
+  const leaderPrompt = [
+    "Please synthesize the aweteam worker results into a concise final answer for the user.",
+    `Read the merged worker results from: ${summaryInputPath}`,
+    "Call out disagreements, failures, or missing coverage if present.",
+    "After you answer, aweteam can persist the pane output with: aweteam collect-summary " + runId,
+  ].join("\n");
+  await tmuxOrThrow(tmux, ["send-keys", "-t", run.leader.pane, "-l", "--", leaderPrompt]);
   await tmuxOrThrow(tmux, ["send-keys", "-t", run.leader.pane, "Enter"]);
   await appendEvent(runDir, {
     type: "leader.summary_requested",
@@ -236,6 +247,20 @@ export async function summarizeRun({ runId, cwd = process.cwd(), tmux } = {}) {
     pane: run.leader.pane,
   });
   return summaryInput;
+}
+
+export async function collectLeaderSummary({ runId, cwd = process.cwd(), tmux } = {}) {
+  const run = await statusRun({ runId, cwd, tmux });
+  const runDir = join(resolve(cwd), ".aweteam", "runs", runId);
+  const capture = await tmuxOrThrow(tmux, ["capture-pane", "-t", run.leader.pane, "-p", "-S", "-500"]);
+  const summary = `${cleanLeaderSummary(capture.stdout)}\n`;
+  await writeFile(join(runDir, "leader", "summary.md"), summary, "utf8");
+  await appendEvent(runDir, {
+    type: "leader.summary_collected",
+    run_id: runId,
+    pane: run.leader.pane,
+  });
+  return summary;
 }
 
 export async function refreshRunStatus({ runId, cwd = process.cwd(), tmux } = {}) {
@@ -249,12 +274,16 @@ export async function refreshRunStatus({ runId, cwd = process.cwd(), tmux } = {}
     if (status.state !== "running") continue;
     const stdoutText = await readFile(join(worker.dir, "stdout.log"), "utf8");
     const result = extractWorkerResult(stdoutText, worker.profile);
+    const exitCode = await readWorkerExitCode(worker.dir);
     const dead = await isPaneDead(runner, worker.pane);
-    if (!result.completed && !dead) continue;
-    const state = result.text ? "done" : "failed";
+    if (!result.completed && exitCode === null && !dead) continue;
+    const state = exitCode === null
+      ? result.text ? "done" : "failed"
+      : exitCode === 0 && result.text ? "done" : "failed";
     const updated = { ...status, state, updated_at: new Date().toISOString() };
     await writeJson(statusPath, updated);
     await writeFile(join(worker.dir, "result.md"), result.text ? `${result.text.trim()}\n` : "", "utf8");
+    await setWorkerPaneTitle(runner, worker, state);
     await appendEvent(runDir, {
       type: state === "done" ? "worker.completed" : "worker.failed",
       run_id: runId,
@@ -371,7 +400,7 @@ async function pipePane(tmux, paneId, logPath) {
 async function configureTmuxTeamConsole(tmux, { sessionName, leaderPane, workers }) {
   await tmuxOrThrow(tmux, ["select-pane", "-t", leaderPane, "-T", "leader main"]);
   for (const worker of workers) {
-    await tmuxOrThrow(tmux, ["select-pane", "-t", worker.pane, "-T", `${worker.name} ${worker.profile}`]);
+    await tmuxOrThrow(tmux, ["select-pane", "-t", worker.pane, "-T", `${worker.name} ${worker.profile} ${worker.state ?? "running"}`]);
   }
   await tmuxOrThrow(tmux, ["set-option", "-t", sessionName, "mouse", "on"]);
   await tmuxOrThrow(tmux, ["bind-key", "-T", "prefix", "1", "select-pane", "-t", leaderPane]);
@@ -458,6 +487,17 @@ function buildShellCommand(profile, args) {
   return words.join(" ");
 }
 
+function buildPersistentWorkerPaneCommand(workerCommand, exitCodePath) {
+  const script = [
+    workerCommand,
+    "aweteam_status=$?",
+    `printf '%s\\n' "$aweteam_status" > ${shellQuote(exitCodePath)}`,
+    `printf '\\n[aweteam] worker finished with exit %s\\n' "$aweteam_status"`,
+    `exec "\${SHELL:-/bin/zsh}"`,
+  ].join("; ");
+  return `/bin/zsh -lc ${shellQuote(script)}`;
+}
+
 function shellQuoteShellOperatorAware(value) {
   if (value === "<") return value;
   return shellQuote(value);
@@ -502,6 +542,11 @@ task to a task file under this run directory, then call:
 aweteam spawn --run-id ${runId} --profile <profile-name> --task-file <task-file>
 \`\`\`
 
+This is the assignment protocol: choose the worker profile explicitly and put
+that worker's exact assignment in the task file. To assign different work to
+different workers, create one task file per worker and call aweteam spawn once
+per assignment.
+
 Only use profiles from the default worker pool. Do not create ad-hoc provider
 commands. Respect max_instances.
 `;
@@ -534,6 +579,21 @@ async function withRunLock(runDir, operation) {
   throw new Error(`timed out waiting for run lock: ${runDir}`);
 }
 
+async function readWorkerExitCode(workerDir) {
+  try {
+    const raw = await readFile(join(workerDir, "exit-code.txt"), "utf8");
+    const value = Number.parseInt(raw.trim(), 10);
+    return Number.isNaN(value) ? null : value;
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function setWorkerPaneTitle(tmux, worker, state) {
+  await tmuxOrThrow(tmux, ["select-pane", "-t", worker.pane, "-T", `${worker.name} ${worker.profile} ${state}`]);
+}
+
 async function isPaneDead(tmux, paneId) {
   if (!tmux || !paneId) return false;
   const result = await tmux(["display-message", "-t", paneId, "-p", "#{pane_dead}"]);
@@ -547,6 +607,7 @@ function extractWorkerResult(stdoutText, profileName = "") {
     return { completed: true, text };
   }
   const cleaned = stdoutText
+    .replace(/\[aweteam\] worker finished with exit [0-9]+[\s\S]*$/m, "")
     .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\x1B[78]/g, "")
     .trim();
@@ -569,6 +630,38 @@ function extractCodexAgentText(stdoutText) {
   return latest.trim();
 }
 
+function cleanLeaderSummary(stdoutText) {
+  const cleaned = stripTerminalControls(stdoutText)
+    .replace(/^[⏺✻✶]\s*/gm, "")
+    .trim();
+  const lines = cleaned.split(/\n/);
+  const readMarker = findLastIndex(lines, (line) => /^\s*Read \d+ file/.test(line));
+  const start = readMarker >= 0 ? readMarker + 1 : 0;
+  const body = lines.slice(start).map((line) => line.replace(/^\s{0,2}/, ""));
+  const end = body.findIndex((line) => (
+    /^\s*Bash\(aweteam collect-summary/.test(line)
+    || /^─{5,}/.test(line)
+    || /^❯/.test(line.trim())
+    || /bypass permissions/.test(line)
+  ));
+  return body.slice(0, end >= 0 ? end : undefined).join("\n").trim();
+}
+
+function findLastIndex(values, predicate) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index], index)) return index;
+  }
+  return -1;
+}
+
+function stripTerminalControls(text) {
+  return text
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1B[78]/g, "")
+    .replace(/\x1B[=>][0-9;?]*[a-zA-Z]?/g, "")
+    .replace(/\r/g, "");
+}
+
 function makeRunId() {
   return new Date().toISOString().replaceAll(/[-:.TZ]/g, "").slice(0, 14);
 }
@@ -586,7 +679,10 @@ export function defaultConfigPath(cwd = process.cwd()) {
 }
 
 export function displayRunStatus(run) {
-  const workers = run.workers.map((worker) => `${worker.name}\t${worker.profile}\t${worker.state ?? "unknown"}\t${worker.pane}`).join("\n");
+  const workers = run.workers.map((worker) => {
+    const resultPath = worker.state && worker.state !== "running" ? `\tresult=${join(worker.dir, "result.md")}` : "";
+    return `${worker.name}\t${worker.profile}\t${worker.state ?? "unknown"}\t${worker.pane}${resultPath}`;
+  }).join("\n");
   return [
     `run_id: ${run.run_id}`,
     `session: ${run.session_name}`,
