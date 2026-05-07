@@ -13,6 +13,9 @@ aweteam --config aweteam.json
 aweteam run "task" --config aweteam.json
 aweteam spawn --run-id <run-id> --profile <name> --task-file <path>
 aweteam status <run-id>
+aweteam status <run-id> --watch
+aweteam focus <run-id> <leader|worker-name|profile>
+aweteam summarize <run-id>
 ```
 
 `spawn` is the small local protocol used by the leader after the user confirms a
@@ -23,6 +26,16 @@ For Claude Code leaders, aweteam starts the leader with native `Task` delegation
 disabled and injects instructions that "agent" means an aweteam tmux worker
 pane. This keeps Claude Code's internal Explore/Task agents from substituting
 for aweteam workers.
+
+Claude profiles pass `env` through `claude --settings`. Codex profiles pass
+`model` through `codex --model` or `codex exec --model`; profile `env` is
+injected as shell environment variables rather than `--settings`.
+
+Each run is a tmux team console. The leader pane is selected by `prefix+1`, and
+worker panes are selected by `prefix+2` through `prefix+9` as they are spawned.
+`aweteam status` refreshes worker completion state and extracts `result.md`;
+`aweteam summarize` sends collected worker results back to the leader pane for
+final synthesis.
 
 ## Config
 
@@ -41,14 +54,12 @@ The MVP config format is JSON:
     "codex": {
       "provider": "codex",
       "command": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-5.4-mini",
       "max_instances": 1
     }
   }
 }
 ```
-
-See `docs/mvp-design.md` for the design constraints.
 
 ## Quick Start
 
@@ -99,13 +110,32 @@ Check a run from another terminal:
 aweteam status <run-id>
 ```
 
+Open a watch-style status view for a tmux status pane:
+
+```bash
+aweteam status <run-id> --watch
+```
+
+Focus a pane from another terminal:
+
+```bash
+aweteam focus <run-id> leader
+aweteam focus <run-id> worker-1
+```
+
+After workers finish, ask the leader to synthesize results:
+
+```bash
+aweteam summarize <run-id>
+```
+
 ## Operation Example
 
 This example assumes `aweteam.json` contains:
 
 - leader: `cc-xiaomi`
-- default workers: `cc-glm`, `cc-gemini`, `codex`
-- `codex` has `max_instances: 2`
+- default workers: `cc-glm`, `cc-gemini`, `codex-gpt5.4-mini`
+- `codex-gpt5.4-mini` has `max_instances: 2`
 
 Start aweteam:
 
@@ -136,7 +166,7 @@ The leader should propose a plan, for example:
 ```text
 1. cc-glm: implement backend login/session flow
 2. cc-gemini: implement frontend login UI
-3. codex: review edge cases and security issues
+3. codex-gpt5.4-mini: review edge cases and security issues
 ```
 
 After you confirm, the leader writes task files such as:
@@ -152,7 +182,7 @@ Then the leader calls:
 ```bash
 aweteam spawn --run-id <run-id> --profile cc-glm --task-file .aweteam/runs/<run-id>/tasks/login-backend.md
 aweteam spawn --run-id <run-id> --profile cc-gemini --task-file .aweteam/runs/<run-id>/tasks/login-frontend.md
-aweteam spawn --run-id <run-id> --profile codex --task-file .aweteam/runs/<run-id>/tasks/login-review.md
+aweteam spawn --run-id <run-id> --profile codex-gpt5.4-mini --task-file .aweteam/runs/<run-id>/tasks/login-review.md
 ```
 
 aweteam validates each profile against `default_workers`, checks
@@ -171,7 +201,7 @@ run_id: <run-id>
 session: aweteam-<run-id>
 leader: cc-xiaomi    %0
 workers:
-worker-1    cc-glm       %1
-worker-2    cc-gemini    %2
-worker-3    codex        %3
+worker-1    cc-glm       done       %1
+worker-2    cc-gemini    running    %2
+worker-3    codex-gpt5.4-mini    done       %3
 ```

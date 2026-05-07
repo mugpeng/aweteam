@@ -25,7 +25,7 @@
     "codex": {
       "provider": "codex",
       "command": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-5.4-mini",
       "max_instances": 2
     },
     "claudecode-official": {
@@ -36,4 +36,3 @@
     }
   }
 }
-

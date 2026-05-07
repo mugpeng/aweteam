@@ -2,8 +2,10 @@ import {
   createRun,
   defaultConfigPath,
   displayRunStatus,
+  focusRunPane,
   spawnWorker,
   statusRun,
+  summarizeRun,
 } from "./core.mjs";
 
 export async function runCli({
@@ -51,8 +53,28 @@ export async function runCli({
     if (command === "status") {
       const runId = argv[1];
       if (!runId) throw new Error("status requires <run-id>");
-      const run = await statusRun({ runId, cwd });
-      stdout(displayRunStatus(run));
+      const watch = argv.includes("--watch");
+      if (watch) {
+        await watchStatus({ runId, cwd, stdout, tmux });
+      } else {
+        const run = await statusRun({ runId, cwd, tmux });
+        stdout(displayRunStatus(run));
+      }
+      return 0;
+    }
+    if (command === "focus") {
+      const runId = argv[1];
+      const target = argv[2];
+      if (!runId || !target) throw new Error("focus requires <run-id> <leader|worker-name|profile>");
+      const pane = await focusRunPane({ runId, target, cwd, tmux });
+      stdout(`focused: ${target}\t${pane}`);
+      return 0;
+    }
+    if (command === "summarize") {
+      const runId = argv[1];
+      if (!runId) throw new Error("summarize requires <run-id>");
+      await summarizeRun({ runId, cwd, tmux });
+      stdout(`summary requested: ${runId}`);
       return 0;
     }
     throw new Error(`unknown command: ${command}`);
@@ -137,6 +159,8 @@ Usage:
   aweteam run <task> [--config aweteam.json] [--run-id id] [--no-attach]
   aweteam spawn --run-id id --profile name --task-file path
   aweteam status <run-id>
+  aweteam focus <run-id> <leader|worker-name|profile>
+  aweteam summarize <run-id>
 
 Workflow:
   1. Configure one leader and a default worker pool in aweteam.json.
@@ -156,7 +180,16 @@ Commands:
       Create one worker pane from an allowed default_workers profile.
 
   aweteam status <run-id>
-      Print the run id, tmux session, leader pane, and worker panes.
+      Refresh and print the run id, tmux session, leader pane, worker states, and worker panes.
+
+  aweteam status <run-id> --watch
+      Continuously refresh status for use in a tmux status pane.
+
+  aweteam focus <run-id> <leader|worker-name|profile>
+      Select the leader or worker pane inside the aweteam tmux session.
+
+  aweteam summarize <run-id>
+      Send collected worker results back to the leader pane for final synthesis.
 
 Examples:
   aweteam --config aweteam.json
@@ -168,4 +201,12 @@ Config:
   .aweteam/runs/<run-id>/config.resolved.json, so later edits to aweteam.json do
   not change an existing run.
 `;
+}
+
+async function watchStatus({ runId, cwd, stdout, tmux }) {
+  while (true) {
+    const run = await statusRun({ runId, cwd, tmux });
+    stdout("\x1Bc" + displayRunStatus(run));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
 }

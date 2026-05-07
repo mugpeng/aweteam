@@ -24,7 +24,7 @@ async function writeConfig(dir) {
       codex: {
         provider: "codex",
         command: "codex",
-        model: "gpt-5.3-codex",
+        model: "gpt-5.4-mini",
         max_instances: 1,
       },
     },
@@ -51,7 +51,8 @@ test("run command creates a run without attaching when requested", async () => {
 
   assert.equal(exitCode, 0);
   assert.match(output.join("\n"), /run_id: cli-run/);
-  assert.equal(tmuxCalls.length, 2);
+  assert.equal(tmuxCalls.some((args) => args[0] === "pipe-pane"), true);
+  assert.equal(tmuxCalls.some((args) => args[0] === "select-layout"), true);
 
   const runJson = JSON.parse(await readFile(join(dir, ".aweteam", "runs", "cli-run", "run.json"), "utf8"));
   assert.equal(runJson.task, "ship it");
@@ -154,5 +155,42 @@ test("status command prints run and worker pane metadata", async () => {
 
   assert.equal(exitCode, 0);
   assert.match(output.join("\n"), /leader: main\s+%1/);
-  assert.match(output.join("\n"), /worker-1\s+codex\s+%2/);
+  assert.match(output.join("\n"), /worker-1\s+codex\s+running\s+%2/);
+});
+
+test("focus command selects leader or worker panes", async () => {
+  const dir = await tempDir();
+  const configPath = await writeConfig(dir);
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "worker task", "utf8");
+  const calls = [];
+
+  await runCli({
+    argv: ["run", "ship it", "--config", configPath, "--run-id", "cli-focus", "--no-attach"],
+    cwd: dir,
+    stdout: () => {},
+    stderr: () => {},
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  await runCli({
+    argv: ["spawn", "--run-id", "cli-focus", "--profile", "codex", "--task-file", taskFile],
+    cwd: dir,
+    stdout: () => {},
+    stderr: () => {},
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+
+  const exitCode = await runCli({
+    argv: ["focus", "cli-focus", "worker-1"],
+    cwd: dir,
+    stdout: () => {},
+    stderr: () => {},
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(calls, [["select-pane", "-t", "%2"]]);
 });

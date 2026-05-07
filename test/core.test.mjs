@@ -11,7 +11,9 @@ import {
   createRun,
   createRealTmuxRunner,
   loadConfig,
+  refreshRunStatus,
   spawnWorker,
+  summarizeRun,
 } from "../src/core.mjs";
 
 async function tempDir() {
@@ -46,7 +48,7 @@ function sampleConfig() {
       codex: {
         provider: "codex",
         command: "codex",
-        model: "gpt-5.3-codex",
+        model: "gpt-5.4-mini",
         max_instances: 1,
       },
       hidden: {
@@ -136,7 +138,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "%1",
     "cat >> " + shellQuote(join(run.runDir, "leader", "stdout.log")),
   ]);
-  assert.equal(tmuxCalls.length, 2);
+  assert.equal(tmuxCalls.some((args) => args[0] === "select-layout"), true);
 
   const runJson = JSON.parse(await readFile(join(run.runDir, "run.json"), "utf8"));
   assert.equal(runJson.leader.pane, "%1");
@@ -168,6 +170,19 @@ test("buildLeaderCommand disables Claude native subagents", () => {
   assert.equal(command, "claude --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt 'leader rules'");
 });
 
+test("buildLeaderCommand supports codex leaders without claude settings", () => {
+  const command = buildLeaderCommand({
+    provider: "codex",
+    command: "codex",
+    model: "gpt-5.4-mini",
+    env: {
+      HTTPS_PROXY: "http://127.0.0.1:7890",
+    },
+  }, "leader rules");
+
+  assert.equal(command, "HTTPS_PROXY=http://127.0.0.1:7890 codex --model gpt-5.4-mini 'leader rules'");
+});
+
 test("buildWorkerCommand uses provider-specific non-interactive commands", () => {
   assert.equal(
     buildWorkerCommand({
@@ -183,11 +198,194 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
     buildWorkerCommand({
       provider: "codex",
       command: "codex",
-      model: "gpt-5.4",
-      env: {},
+      model: "gpt-5.4-mini",
+      env: {
+        HTTPS_PROXY: "http://127.0.0.1:7890",
+      },
     }, "/tmp/task.md"),
-    "codex exec --skip-git-repo-check --json - < /tmp/task.md",
+    "HTTPS_PROXY=http://127.0.0.1:7890 codex exec --skip-git-repo-check --model gpt-5.4-mini --json - < /tmp/task.md",
   );
+});
+
+test("createRun configures a tmux team console", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+
+  await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "tmux-console",
+    attach: false,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%1\n", stderr: "", status: 0 };
+    },
+  });
+
+  assert.deepEqual(calls.at(-4), ["select-pane", "-t", "%1", "-T", "leader main"]);
+  assert.deepEqual(calls.at(-3), ["set-option", "-t", "aweteam-tmux-console", "mouse", "on"]);
+  assert.deepEqual(calls.at(-2), ["bind-key", "-T", "prefix", "1", "select-pane", "-t", "%1"]);
+  assert.deepEqual(calls.at(-1), ["select-layout", "-t", "aweteam-tmux-console", "main-vertical"]);
+});
+
+test("spawnWorker serializes concurrent spawns with a run lock", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  let paneNumber = 1;
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "concurrent-spawn",
+    attach: false,
+    tmux: async () => ({ stdout: `%${paneNumber++}\n`, stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+
+  const [first, second] = await Promise.all([
+    spawnWorker({
+      runId: run.runId,
+      profileName: "cc-glm",
+      taskFile,
+      cwd: dir,
+      tmux: async () => ({ stdout: `%${paneNumber++}\n`, stderr: "", status: 0 }),
+    }),
+    spawnWorker({
+      runId: run.runId,
+      profileName: "cc-glm",
+      taskFile,
+      cwd: dir,
+      tmux: async () => ({ stdout: `%${paneNumber++}\n`, stderr: "", status: 0 }),
+    }),
+  ]);
+
+  assert.deepEqual([first.name, second.name].sort(), ["worker-1", "worker-2"]);
+  const runJson = JSON.parse(await readFile(join(run.runDir, "run.json"), "utf8"));
+  assert.deepEqual(runJson.workers.map((worker) => worker.name), ["worker-1", "worker-2"]);
+});
+
+test("refreshRunStatus extracts completed codex result from worker stdout", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "refresh-codex",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "codex",
+    taskFile,
+    cwd: dir,
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+  await writeFile(join(worker.dir, "stdout.log"), [
+    JSON.stringify({ type: "thread.started", thread_id: "t1" }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "codex result text" } }),
+    JSON.stringify({ type: "turn.completed" }),
+    "",
+  ].join("\n"), "utf8");
+
+  await refreshRunStatus({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      if (args[0] === "display-message") {
+        return { stdout: "1\n", stderr: "", status: 0 };
+      }
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+
+  const status = JSON.parse(await readFile(join(worker.dir, "status.json"), "utf8"));
+  assert.equal(status.state, "done");
+  assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "codex result text\n");
+});
+
+test("refreshRunStatus extracts completed claude text and strips terminal controls", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "refresh-claude",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "cc-glm",
+    taskFile,
+    cwd: dir,
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+  await writeFile(join(worker.dir, "stdout.log"), "claude result text\n\u001b[?25h\u001b7\u001b8", "utf8");
+
+  await refreshRunStatus({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async () => ({ stdout: "1\n", stderr: "", status: 0 }),
+  });
+
+  assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "claude result text\n");
+});
+
+test("summarizeRun sends collected worker results to the leader pane", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "summarize",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "codex",
+    taskFile,
+    cwd: dir,
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+  await writeFile(join(worker.dir, "result.md"), "worker result\n", "utf8");
+  await writeFile(join(worker.dir, "status.json"), JSON.stringify({
+    role: "worker",
+    state: "done",
+    name: "worker-1",
+    profile: "codex",
+    pane: "%2",
+    updated_at: new Date().toISOString(),
+  }, null, 2), "utf8");
+
+  const summary = await summarizeRun({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+
+  assert.match(summary, /worker-1 \(codex\)/);
+  assert.match(summary, /worker result/);
+  assert.deepEqual(calls.at(-2).slice(0, 5), ["send-keys", "-t", "%1", "-l", "--"]);
+  assert.deepEqual(calls.at(-1), ["send-keys", "-t", "%1", "Enter"]);
+  assert.equal(await readFile(join(run.runDir, "leader", "summary-input.md"), "utf8"), summary);
 });
 
 test("real tmux runner attaches with inherited terminal stdio", async () => {
@@ -306,14 +504,14 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
   });
 
   assert.equal(worker.name, "worker-1");
-  assert.deepEqual(calls.at(-1), [
+  assert.deepEqual(calls.find((args) => args[0] === "pipe-pane" && args[3] === "%2"), [
     "pipe-pane",
     "-o",
     "-t",
     "%2",
     "cat >> " + shellQuote(join(worker.dir, "stdout.log")),
   ]);
-  assert.deepEqual(calls.at(-2), [
+  assert.deepEqual(calls.find((args) => args[0] === "split-window"), [
     "split-window",
     "-t",
     "aweteam-spawn-ok",
