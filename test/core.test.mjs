@@ -185,7 +185,7 @@ test("buildLeaderCommand supports codex leaders without claude settings", () => 
   assert.equal(command, "HTTPS_PROXY=http://127.0.0.1:7890 codex --model gpt-5.4-mini 'leader rules'");
 });
 
-test("buildWorkerCommand uses provider-specific non-interactive commands", () => {
+test("buildWorkerCommand uses provider-specific interactive commands", () => {
   assert.equal(
     buildWorkerCommand({
       provider: "claude",
@@ -193,7 +193,7 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
       model: "glm-4.6",
       env: {},
     }, "/tmp/task.md"),
-    "claude -p --output-format text < /tmp/task.md",
+    "claude",
   );
 
   assert.equal(
@@ -205,11 +205,11 @@ test("buildWorkerCommand uses provider-specific non-interactive commands", () =>
         HTTPS_PROXY: "http://127.0.0.1:7890",
       },
     }, "/tmp/task.md"),
-    "HTTPS_PROXY=http://127.0.0.1:7890 codex exec --skip-git-repo-check --model gpt-5.4-mini --json - < /tmp/task.md",
+    "HTTPS_PROXY=http://127.0.0.1:7890 codex --model gpt-5.4-mini",
   );
 });
 
-test("spawnWorker wraps worker command so the tmux pane remains after completion", async () => {
+test("spawnWorker starts an interactive agent pane with an assignment prompt", async () => {
   const dir = await tempDir();
   const configPath = await writeJsonConfig(dir, sampleConfig());
   const calls = [];
@@ -239,10 +239,10 @@ test("spawnWorker wraps worker command so the tmux pane remains after completion
   });
 
   const split = calls.find((args) => args[0] === "split-window");
-  assert.match(split.at(-1), /^\/bin\/zsh -lc /);
-  assert.match(split.at(-1), /worker finished with exit/);
-  assert.match(split.at(-1), /exec "\$\{SHELL:-\/bin\/zsh\}"/);
-  assert.match(split.at(-1), /exit-code\.txt/);
+  assert.match(split.at(-1), /^claude '# aweteam worker assignment/);
+  assert.match(split.at(-1), /task\.md/);
+  assert.match(split.at(-1), /result\.md/);
+  assert.equal(calls.some((args) => args[0] === "send-keys" && args[3] === "-l"), false);
 });
 
 test("createRun configures a tmux team console", async () => {
@@ -356,6 +356,82 @@ test("refreshRunStatus extracts completed codex result from worker stdout", asyn
     "-T",
     "worker-1 codex done",
   ]);
+});
+
+test("refreshRunStatus marks worker done from a result artifact while pane remains alive", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "refresh-artifact",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "codex",
+    taskFile,
+    cwd: dir,
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+  await writeFile(join(worker.dir, "result.md"), "artifact result\n", "utf8");
+
+  await refreshRunStatus({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      if (args[0] === "display-message") {
+        return { stdout: "0\n", stderr: "", status: 0 };
+      }
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+
+  const status = JSON.parse(await readFile(join(worker.dir, "status.json"), "utf8"));
+  assert.equal(status.state, "done");
+  assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "artifact result\n");
+});
+
+test("refreshRunStatus does not mark an interactive live pane done from stdout alone", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "refresh-live-pane",
+    attach: false,
+    tmux: async () => ({ stdout: "%1\n", stderr: "", status: 0 }),
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "cc-glm",
+    taskFile,
+    cwd: dir,
+    tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
+  });
+  await writeFile(join(worker.dir, "stdout.log"), "# aweteam worker assignment\nClaude UI text\n", "utf8");
+
+  await refreshRunStatus({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      if (args[0] === "display-message") {
+        return { stdout: "0\n", stderr: "", status: 0 };
+      }
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+
+  const status = JSON.parse(await readFile(join(worker.dir, "status.json"), "utf8"));
+  assert.equal(status.state, "running");
+  assert.equal(await readFile(join(worker.dir, "result.md"), "utf8"), "");
 });
 
 test("refreshRunStatus extracts completed claude text and strips terminal controls", async () => {
@@ -610,8 +686,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-F",
     "#{pane_id}",
   ]);
-  assert.match(split.at(-1), /claude -p --output-format text < /);
-  assert.match(split.at(-1), /worker finished with exit/);
+  assert.match(split.at(-1), /^claude '# aweteam worker assignment/);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
   const profile = JSON.parse(await readFile(join(worker.dir, "profile.json"), "utf8"));

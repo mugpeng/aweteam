@@ -29,14 +29,14 @@ pane. This keeps Claude Code's internal Explore/Task agents from substituting
 for aweteam workers.
 
 Claude profiles pass `env` through `claude --settings`. Codex profiles pass
-`model` through `codex --model` or `codex exec --model`; profile `env` is
+`model` through `codex --model`; profile `env` is
 injected as shell environment variables rather than `--settings`.
 
 Each run is a tmux team console. The leader pane is selected by `prefix+1`, and
 worker panes are selected by `prefix+2` through `prefix+9` as they are spawned.
-Worker panes stay open after the worker command finishes so their output remains
-visible in tmux.
-`aweteam status` refreshes worker completion state and extracts `result.md`;
+Worker panes run the interactive agent UI and stay open after completing their
+assigned `task.md`, so the worker conversation remains visible in tmux.
+`aweteam status` refreshes worker completion state from `result.md`;
 `aweteam summarize` sends collected worker results back to the leader pane for
 final synthesis; `aweteam collect-summary` captures the leader pane into
 `leader/summary.md`.

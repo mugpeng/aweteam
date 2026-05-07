@@ -144,8 +144,12 @@ export async function spawnWorker(options) {
     await writeFile(join(workerDir, "stderr.log"), "", "utf8");
     await writeFile(join(workerDir, "result.md"), "", "utf8");
 
-    const workerCommand = buildWorkerCommand(profile, join(workerDir, "task.md"));
-    const paneCommand = buildPersistentWorkerPaneCommand(workerCommand, join(workerDir, "exit-code.txt"));
+    const workerCommand = buildWorkerCommand(profile, join(workerDir, "task.md"), renderWorkerAssignment({
+      workerName,
+      profileName,
+      taskPath: join(workerDir, "task.md"),
+      resultPath: join(workerDir, "result.md"),
+    }));
     const pane = await tmuxOrThrow(options.tmux, [
       "split-window",
       "-t",
@@ -153,7 +157,7 @@ export async function spawnWorker(options) {
       "-P",
       "-F",
       "#{pane_id}",
-      paneCommand,
+      workerCommand,
     ]);
     const paneId = pane.stdout.trim() || workerName;
     await pipePane(options.tmux, paneId, join(workerDir, "stdout.log"));
@@ -273,10 +277,25 @@ export async function refreshRunStatus({ runId, cwd = process.cwd(), tmux } = {}
     const status = JSON.parse(await readFile(statusPath, "utf8"));
     if (status.state !== "running") continue;
     const stdoutText = await readFile(join(worker.dir, "stdout.log"), "utf8");
+    const artifactText = await readExistingWorkerResult(worker.dir);
+    if (artifactText) {
+      const updated = { ...status, state: "done", updated_at: new Date().toISOString() };
+      await writeJson(statusPath, updated);
+      await setWorkerPaneTitle(runner, worker, "done");
+      await appendEvent(runDir, {
+        type: "worker.completed",
+        run_id: runId,
+        worker: worker.name,
+        profile: worker.profile,
+        pane: worker.pane,
+      });
+      changed = true;
+      continue;
+    }
     const result = extractWorkerResult(stdoutText, worker.profile);
     const exitCode = await readWorkerExitCode(worker.dir);
     const dead = await isPaneDead(runner, worker.pane);
-    if (!result.completed && exitCode === null && !dead) continue;
+    if (exitCode === null && !dead) continue;
     const state = exitCode === null
       ? result.text ? "done" : "failed"
       : exitCode === 0 && result.text ? "done" : "failed";
@@ -331,15 +350,16 @@ function normalizeLeaderPolicy(policy = {}) {
   };
 }
 
-export function buildWorkerCommand(profile, taskPath) {
+export function buildWorkerCommand(profile, taskPath, assignmentPrompt) {
   if (profile.provider === "claude") {
-    return buildCommand(profile, ["-p", "--output-format", "text", "<", taskPath]);
+    return buildCommand(profile, assignmentPrompt ? [assignmentPrompt] : []);
   }
   if (profile.provider === "codex") {
     const modelArgs = profile.model ? ["--model", profile.model] : [];
-    return buildShellCommand(profile, ["exec", "--skip-git-repo-check", ...modelArgs, "--json", "-", "<", taskPath]);
+    const promptArgs = assignmentPrompt ? [assignmentPrompt] : [];
+    return buildShellCommand(profile, [...modelArgs, ...promptArgs]);
   }
-  return buildCommand(profile, taskPath ? ["<", taskPath] : null);
+  return buildCommand(profile, assignmentPrompt ? [assignmentPrompt] : []);
 }
 
 async function tmuxOrThrow(tmux, args) {
@@ -487,17 +507,6 @@ function buildShellCommand(profile, args) {
   return words.join(" ");
 }
 
-function buildPersistentWorkerPaneCommand(workerCommand, exitCodePath) {
-  const script = [
-    workerCommand,
-    "aweteam_status=$?",
-    `printf '%s\\n' "$aweteam_status" > ${shellQuote(exitCodePath)}`,
-    `printf '\\n[aweteam] worker finished with exit %s\\n' "$aweteam_status"`,
-    `exec "\${SHELL:-/bin/zsh}"`,
-  ].join("; ");
-  return `/bin/zsh -lc ${shellQuote(script)}`;
-}
-
 function shellQuoteShellOperatorAware(value) {
   if (value === "<") return value;
   return shellQuote(value);
@@ -552,6 +561,23 @@ commands. Respect max_instances.
 `;
 }
 
+function renderWorkerAssignment({ workerName, profileName, taskPath, resultPath }) {
+  return [
+    "# aweteam worker assignment",
+    "",
+    `Worker: ${workerName}`,
+    `Profile: ${profileName}`,
+    "",
+    "Read your task from this file:",
+    taskPath,
+    "",
+    "When you are done, write your final answer as plain text to this file:",
+    resultPath,
+    "",
+    "Keep this agent session open after completing the task so the user can inspect or continue the worker conversation in tmux.",
+  ].join("\n");
+}
+
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
@@ -586,6 +612,16 @@ async function readWorkerExitCode(workerDir) {
     return Number.isNaN(value) ? null : value;
   } catch (error) {
     if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function readExistingWorkerResult(workerDir) {
+  try {
+    const text = await readFile(join(workerDir, "result.md"), "utf8");
+    return text.trim();
+  } catch (error) {
+    if (error?.code === "ENOENT") return "";
     throw error;
   }
 }
