@@ -267,11 +267,67 @@ export async function dispatchOnce({ runId, cwd = process.cwd(), tmux } = {}) {
 }
 
 export async function dispatchRun({ runId, cwd = process.cwd(), tmux, intervalMs = 1000 } = {}) {
+  const notified = new Set();
   while (true) {
     await dispatchOnce({ runId, cwd, tmux });
     await refreshRunStatus({ runId, cwd, tmux });
+    await notifyRunProgress({ runId, cwd, tmux, notified });
     await new Promise((resolveDelay) => setTimeout(resolveDelay, intervalMs));
   }
+}
+
+export async function notifyRunProgress({ runId, cwd = process.cwd(), tmux, notified = new Set() } = {}) {
+  const run = await statusRun({ runId, cwd, tmux });
+  for (const worker of run.workers) {
+    const spawnedKey = `spawned:${worker.name}`;
+    if (!notified.has(spawnedKey)) {
+      await sendLeaderMessage(tmux, run.leader.pane, [
+        `[aweteam] created ${worker.name} (${worker.profile}) in pane ${worker.pane}.`,
+        `Switch with Ctrl-b ${run.workers.indexOf(worker) + 2}.`,
+      ].join("\n"));
+      notified.add(spawnedKey);
+    }
+
+    const doneKey = `done:${worker.name}`;
+    if (worker.state !== "running" && !notified.has(doneKey)) {
+      await sendLeaderMessage(tmux, run.leader.pane, [
+        `[aweteam] ${worker.name} (${worker.profile}) is ${worker.state}.`,
+        `Result file: ${join(worker.dir, "result.md")}`,
+      ].join("\n"));
+      notified.add(doneKey);
+    }
+  }
+
+  if (run.workers.length > 0 && run.workers.every((worker) => worker.state !== "running") && !notified.has("all-done")) {
+    const runDir = join(resolve(cwd), ".aweteam", "runs", runId);
+    const sections = [];
+    for (const worker of run.workers) {
+      const result = await readFile(join(worker.dir, "result.md"), "utf8");
+      sections.push(`## ${worker.name} (${worker.profile})\n\n${result.trim() || "(no result)"}`);
+    }
+    const summaryInputPath = join(runDir, "leader", "summary-input.md");
+    await writeFile(summaryInputPath, [
+      "# aweteam worker results",
+      "",
+      `Run: ${runId}`,
+      `Initial task: ${run.task}`,
+      "",
+      "Synthesize these worker results into a concise final answer for the user.",
+      "Call out disagreements, failures, or missing coverage if present.",
+      "",
+      ...sections,
+      "",
+    ].join("\n"), "utf8");
+    await sendLeaderMessage(tmux, run.leader.pane, [
+      "[aweteam] all workers have finished.",
+      `Merged worker results are ready in: ${summaryInputPath}`,
+      "Read that single file, give the user a concise final answer in this leader pane,",
+      `Also write the same final answer to: ${join(runDir, "leader", "summary.md")}`,
+      "Do not wait on leader/inbox for worker final answers; inbox only contains worker creation receipts.",
+    ].join("\n"));
+    notified.add("all-done");
+  }
+  return notified;
 }
 
 export async function statusRun({ runId, cwd = process.cwd(), tmux } = {}) {
@@ -429,7 +485,11 @@ function normalizeLeaderPolicy(policy = {}) {
 
 export function buildWorkerCommand(profile, taskPath, assignmentPrompt) {
   if (profile.provider === "claude") {
-    return buildCommand(profile, assignmentPrompt ? [assignmentPrompt] : []);
+    const extraArgs = ["--disallowedTools", "Edit,MultiEdit,NotebookEdit"];
+    if (assignmentPrompt) {
+      extraArgs.push(assignmentPrompt);
+    }
+    return buildCommand(profile, extraArgs);
   }
   if (profile.provider === "codex") {
     const modelArgs = profile.model ? ["--model", profile.model] : [];
@@ -494,6 +554,11 @@ async function pipePane(tmux, paneId, logPath) {
   ]);
 }
 
+async function sendLeaderMessage(tmux, pane, message) {
+  await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "-l", "--", message]);
+  await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "Enter"]);
+}
+
 async function startDispatcherPane(tmux, { cwd, runId, sessionName, runDir }) {
   const command = buildDispatcherCommand({ cwd, runId });
   const pane = await tmuxOrThrow(tmux, [
@@ -526,6 +591,8 @@ async function configureTmuxTeamConsole(tmux, { sessionName, leaderPane, workers
     await tmuxOrThrow(tmux, ["select-pane", "-t", worker.pane, "-T", `${worker.name} ${worker.profile} ${worker.state ?? "running"}`]);
   }
   await tmuxOrThrow(tmux, ["set-option", "-t", sessionName, "mouse", "on"]);
+  await tmuxOrThrow(tmux, ["set-option", "-t", sessionName, "pane-border-status", "top"]);
+  await tmuxOrThrow(tmux, ["set-option", "-t", sessionName, "pane-border-format", "#{pane_title}"]);
   await tmuxOrThrow(tmux, ["bind-key", "-T", "prefix", "1", "select-pane", "-t", leaderPane]);
   for (let index = 0; index < workers.length && index < 8; index += 1) {
     await tmuxOrThrow(tmux, ["bind-key", "-T", "prefix", String(index + 2), "select-pane", "-t", workers[index].pane]);
@@ -650,15 +717,21 @@ aweteam is a thin handoff interface. It records handoff artifacts and can send
 worker results back to you, but you own task splitting, approval, and final
 synthesis as the leader/main agent.
 
-You are a coordinator-only leader. Do not execute the user task yourself. Your job is to understand the request, propose a worker allocation plan, wait for explicit user confirmation, then create aweteam worker panes.
+You are a coordinator-only leader. Do not execute delegated work yourself. Your
+job is to understand the user's request, create aweteam worker panes, monitor
+their completion notices, and synthesize the final answer in this leader pane.
 
 In aweteam, "agent" means an aweteam tmux worker pane only. Do not use Claude Code native Task, Explore, or subagent tools as substitutes for aweteam workers.
 
 Default worker pool:
 ${pool}
 
-When the user confirms a plan and asks you to create workers, write each worker
-request as one JSON file under this outbox directory:
+Normal user prompts are short. If the user names worker profiles and tasks, for
+example "use cc-xiaomi for frontend, codex for backend, cc-gemini for bugs",
+treat that as approval to create those workers. Ask a clarifying question only
+when the target profile or task is ambiguous.
+
+To create workers, write one JSON request per worker under this outbox directory:
 
 \`\`\`text
 .aweteam/runs/${runId}/leader/outbox/<request-id>.json
@@ -678,11 +751,16 @@ user should not need to run aweteam spawn from another terminal for normal
 worker creation.
 
 The aweteam dispatcher watches the outbox and creates worker panes for you.
-It writes creation results back under:
+It writes creation receipts back under:
 
 \`\`\`text
 .aweteam/runs/${runId}/leader/inbox/
 \`\`\`
+
+Important: leader/inbox contains worker creation receipts only. Final worker
+answers are in each worker's result.md file. The dispatcher will send messages
+to this leader pane when workers are created, when a worker finishes, and when
+all workers have finished.
 
 This is the assignment protocol: choose the worker profile explicitly and put
 that worker's exact assignment in the JSON task. To assign different work to
@@ -690,6 +768,11 @@ different workers, create one JSON request per worker.
 
 Only use profiles from the default worker pool. Do not create ad-hoc provider
 commands. Respect max_instances.
+
+After creating workers, tell the user the panes and shortcuts, for example:
+"created worker-1 cc-xiaomi in pane %2, switch with Ctrl-b 2". When all worker
+results are ready, read the result.md files, answer in this leader pane, and
+write the same final answer to leader/summary.md.
 `;
 }
 
@@ -703,7 +786,11 @@ function renderWorkerAssignment({ workerName, profileName, taskPath, resultPath 
     "Read your task from this file:",
     taskPath,
     "",
-    "When you are done, write your final answer as plain text to this file:",
+    "Do not modify project or source files. The only file you may write is your own result file listed below.",
+    "",
+    "When you are done, first show a concise final answer in this worker pane so the user can read it directly in tmux.",
+    "",
+    "Then write the same final answer as plain text to this file:",
     resultPath,
     "",
     "Keep this agent session open after completing the task so the user can inspect or continue the worker conversation in tmux.",

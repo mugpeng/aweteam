@@ -20,10 +20,12 @@ aweteam summarize <run-id>
 aweteam collect-summary <run-id>
 ```
 
-The normal workflow is leader-driven. The leader writes one JSON request per
-worker under `leader/outbox`, and the aweteam dispatcher creates the worker
-panes. `spawn` remains available as a low-level debugging command; it only
-accepts profiles listed in `workers` and enforces each profile's `max_instances`.
+The normal workflow happens inside tmux. The user talks to the leader pane in
+plain language, the leader creates worker panes, workers answer in their own
+panes, and the leader writes the final summary in its pane. The file artifacts
+under `.aweteam/runs` are the internal handoff protocol and debugging record.
+`spawn`, `status`, `summarize`, and `collect-summary` remain available as
+low-level debugging commands.
 
 For Claude Code leaders, aweteam starts the leader with native `Task` delegation
 disabled and injects instructions that "agent" means an aweteam tmux worker
@@ -40,10 +42,9 @@ worker panes are selected by `prefix+2` through `prefix+9` as they are spawned.
 inside the same tmux session.
 Worker panes run the interactive agent UI and stay open after completing their
 assigned `task.md`, so the worker conversation remains visible in tmux.
-`aweteam status` refreshes worker completion state from `result.md`;
-`aweteam summarize` sends collected worker results back to the leader pane for
-final synthesis; `aweteam collect-summary` captures the leader pane into
-`leader/summary.md`.
+The dispatcher sends worker-created, worker-done, and all-done notices back to
+the leader pane. Worker final answers are visible in the worker panes and also
+persisted to each worker's `result.md`.
 
 ## Config
 
@@ -102,55 +103,28 @@ aweteam run "创建三个 agent 实现 xx" --config aweteam.json
 ```
 
 In the leader CLI, describe the task naturally and ask it to choose workers only
-from the configured default worker pool. After you confirm the plan, the leader
-should create one outbox request per worker:
-
-```json
-{
-  "profile": "cc-glm",
-  "task": "Exact assignment for this worker."
-}
-```
-
-The request file path is:
+from the configured worker pool:
 
 ```text
-.aweteam/runs/<run-id>/leader/outbox/<request-id>.json
+帮我用 cc-xiaomi 检查前端，codex 5.4mini 检查后端，cc-gemini 看有没有 bug
 ```
 
-The dispatcher watches that directory, creates the worker pane, and writes the
-creation result under `leader/inbox`. You do not need to run `aweteam spawn`
-from another terminal in the normal workflow.
+The leader should create workers without requiring you to mention JSON, outbox,
+dispatcher, or command-line calls. As workers finish, aweteam sends completion
+notices back to the leader pane. You can switch to a worker pane to inspect or
+continue that worker conversation:
 
-Check a run from another terminal:
+```text
+Ctrl-b 1  leader
+Ctrl-b 2  worker-1
+Ctrl-b 3  worker-2
+```
+
+Debug commands remain available from another terminal:
 
 ```bash
 aweteam status <run-id>
-```
-
-Open a watch-style status view for a tmux status pane:
-
-```bash
-aweteam status <run-id> --watch
-```
-
-Focus a pane from another terminal:
-
-```bash
 aweteam focus <run-id> leader
-aweteam focus <run-id> worker-1
-```
-
-After workers finish, ask the leader to synthesize results:
-
-```bash
-aweteam summarize <run-id>
-```
-
-After the leader answers, persist the final visible leader summary:
-
-```bash
-aweteam collect-summary <run-id>
 ```
 
 ## Operation Example

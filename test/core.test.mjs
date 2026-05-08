@@ -13,6 +13,7 @@ import {
   createRealTmuxRunner,
   dispatchOnce,
   loadConfig,
+  notifyRunProgress,
   refreshRunStatus,
   collectLeaderSummary,
   spawnWorker,
@@ -172,9 +173,11 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
   assert.match(instructions, /default worker pool/i);
   assert.match(instructions, /leader\/outbox/);
   assert.match(instructions, /"profile": "<profile-name>"/);
+  assert.match(instructions, /Normal user prompts are short/);
+  assert.match(instructions, /Final worker\s+answers are in each worker's result\.md/);
   assert.match(instructions, /Do not use Claude Code native Task/);
   assert.match(instructions, /coordinator-only leader/);
-  assert.match(instructions, /Do not execute the user task yourself/);
+  assert.match(instructions, /Do not execute delegated work yourself/);
 
   const resolved = JSON.parse(await readFile(join(run.runDir, "config.resolved.json"), "utf8"));
   assert.equal(resolved.leader.role, "leader");
@@ -216,7 +219,7 @@ test("buildWorkerCommand uses provider-specific interactive commands", () => {
       model: "glm-4.6",
       env: {},
     }, "/tmp/task.md"),
-    "claude",
+    "claude --disallowedTools Edit,MultiEdit,NotebookEdit",
   );
 
   assert.equal(
@@ -262,9 +265,11 @@ test("spawnWorker starts an interactive agent pane with an assignment prompt", a
   });
 
   const split = calls.find((args) => args[0] === "split-window");
-  assert.match(split.at(-1), /^claude '# aweteam worker assignment/);
+  assert.match(split.at(-1), /^claude --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
   assert.match(split.at(-1), /task\.md/);
   assert.match(split.at(-1), /result\.md/);
+  assert.match(split.at(-1), /Do not modify project or source files/);
+  assert.match(split.at(-1), /show a concise final answer in this worker pane/);
   assert.equal(calls.some((args) => args[0] === "send-keys" && args[3] === "-l"), false);
 });
 
@@ -285,9 +290,11 @@ test("createRun configures a tmux team console", async () => {
     },
   });
 
-  assert.deepEqual(calls.at(-4), ["select-pane", "-t", "%1", "-T", "leader main"]);
-  assert.deepEqual(calls.at(-3), ["set-option", "-t", "aweteam-tmux-console", "mouse", "on"]);
-  assert.deepEqual(calls.at(-2), ["bind-key", "-T", "prefix", "1", "select-pane", "-t", "%1"]);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["select-pane", "-t", "%1", "-T", "leader main"])), true);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["set-option", "-t", "aweteam-tmux-console", "mouse", "on"])), true);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["set-option", "-t", "aweteam-tmux-console", "pane-border-status", "top"])), true);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["set-option", "-t", "aweteam-tmux-console", "pane-border-format", "#{pane_title}"])), true);
+  assert.equal(calls.some((args) => JSON.stringify(args) === JSON.stringify(["bind-key", "-T", "prefix", "1", "select-pane", "-t", "%1"])), true);
   assert.deepEqual(calls.at(-1), ["select-layout", "-t", "aweteam-tmux-console", "main-vertical"]);
 });
 
@@ -363,6 +370,68 @@ test("dispatchOnce creates workers from leader outbox requests", async () => {
   await assert.rejects(readFile(requestPath, "utf8"), /ENOENT/);
   const split = calls.find((args) => args[0] === "split-window");
   assert.deepEqual(split.slice(0, 3), ["split-window", "-t", "%1"]);
+});
+
+test("notifyRunProgress sends worker lifecycle messages into the leader pane", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "notify-progress",
+    attach: false,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%1\n", stderr: "", status: 0 };
+    },
+  });
+  const taskFile = join(dir, "task.md");
+  await writeFile(taskFile, "do work", "utf8");
+  const worker = await spawnWorker({
+    runId: run.runId,
+    profileName: "cc-glm",
+    taskFile,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%2\n", stderr: "", status: 0 };
+    },
+  });
+
+  const notified = await notifyRunProgress({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      if (args[0] === "display-message") return { stdout: "0\n", stderr: "", status: 0 };
+      return { stdout: "", stderr: "", status: 0 };
+    },
+  });
+  assert.equal(notified.has("spawned:worker-1"), true);
+  assert.equal(calls.some((args) => args[0] === "send-keys" && args.includes("[aweteam] created worker-1 (cc-glm) in pane %2.\nSwitch with Ctrl-b 2.")), true);
+
+  await writeFile(join(worker.dir, "result.md"), "worker result\n", "utf8");
+  await notifyRunProgress({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      if (args[0] === "display-message") return { stdout: "0\n", stderr: "", status: 0 };
+      return { stdout: "", stderr: "", status: 0 };
+    },
+    notified,
+  });
+
+  assert.equal(notified.has("done:worker-1"), true);
+  assert.equal(notified.has("all-done"), true);
+  const summaryInput = await readFile(join(run.runDir, "leader", "summary-input.md"), "utf8");
+  assert.match(summaryInput, /## worker-1 \(cc-glm\)/);
+  assert.match(summaryInput, /worker result/);
+  assert.equal(calls.some((args) => args[0] === "send-keys" && String(args.at(-1)).includes("all workers have finished")), true);
+  assert.equal(calls.some((args) => args[0] === "send-keys" && String(args.at(-1)).includes("Merged worker results are ready")), true);
+  assert.equal(calls.some((args) => args[0] === "send-keys" && String(args.at(-1)).includes("Do not wait on leader/inbox")), true);
 });
 
 test("buildDispatcherCommand re-enters aweteam from the run cwd", () => {
@@ -789,7 +858,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-F",
     "#{pane_id}",
   ]);
-  assert.match(split.at(-1), /^claude '# aweteam worker assignment/);
+  assert.match(split.at(-1), /^claude --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
   const profile = JSON.parse(await readFile(join(worker.dir, "profile.json"), "utf8"));

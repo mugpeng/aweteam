@@ -191,11 +191,11 @@ Usage:
   aweteam collect-summary <run-id>
 
 Workflow:
-  1. Configure one leader and a default worker pool in aweteam.json.
+  1. Configure one leader and a worker pool in aweteam.json.
   2. Start aweteam; it opens a tmux session focused on leader/main.
-  3. Describe the task and discuss the plan with the leader in its real CLI.
-  4. After you confirm, the leader writes outbox requests; aweteam creates workers.
-  5. Switch between leader/main and worker-N panes directly in tmux.
+  3. Tell the leader what to delegate in plain language.
+  4. aweteam creates worker panes and sends lifecycle notices back to leader/main.
+  5. Read and continue conversations in leader/worker panes; commands are for debugging.
 
 Commands:
   aweteam --config aweteam.json
@@ -205,8 +205,7 @@ Commands:
       Start a leader session with an explicit topic.
 
   aweteam spawn --run-id <id> --profile <name> --task-file <path>
-      Create one worker pane from an allowed workers profile. This is a
-      low-level debugging command; the normal workflow is leader-driven dispatch.
+      Debug command: create one worker pane from an allowed workers profile.
 
   aweteam dispatch <run-id> [--once]
       Internal dispatcher. It watches leader/outbox and creates worker panes.
@@ -221,10 +220,10 @@ Commands:
       Select the leader or worker pane inside the aweteam tmux session.
 
   aweteam summarize <run-id>
-      Send collected worker results back to the leader pane for final synthesis.
+      Debug command: send collected worker results back to the leader pane.
 
   aweteam collect-summary <run-id>
-      Capture the leader pane and persist it to leader/summary.md.
+      Debug command: capture the leader pane and persist it to leader/summary.md.
 
 Examples:
   aweteam --config aweteam.json
