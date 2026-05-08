@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -8,8 +8,10 @@ import test from "node:test";
 import {
   buildLeaderCommand,
   buildWorkerCommand,
+  buildDispatcherCommand,
   createRun,
   createRealTmuxRunner,
+  dispatchOnce,
   loadConfig,
   refreshRunStatus,
   collectLeaderSummary,
@@ -29,17 +31,17 @@ async function writeJsonConfig(dir, value) {
 
 function sampleConfig() {
   return {
-    leader: {
-      name: "main",
-      provider: "claude",
-      command: "claude",
-      model: "sonnet",
-      env: {
-        ANTHROPIC_MODEL: "sonnet",
+    leader: "main",
+    workers: ["cc-glm", "codex"],
+    profiles: {
+      main: {
+        provider: "claude",
+        command: "claude",
+        model: "sonnet",
+        env: {
+          ANTHROPIC_MODEL: "sonnet",
+        },
       },
-    },
-    default_workers: ["cc-glm", "codex"],
-    worker_profiles: {
       "cc-glm": {
         provider: "claude",
         command: "claude",
@@ -68,15 +70,15 @@ test("loadConfig preserves leader role and allowed worker profiles", async () =>
   const config = await loadConfig(configPath);
 
   assert.equal(config.leader.role, "leader");
-  assert.equal(config.worker_profiles["cc-glm"].role, "worker");
-  assert.deepEqual(config.default_workers, ["cc-glm", "codex"]);
-  assert.equal(config.worker_profiles.hidden.role, "worker");
+  assert.equal(config.profiles["cc-glm"].role, "worker");
+  assert.deepEqual(config.workers, ["cc-glm", "codex"]);
+  assert.equal(config.profiles.hidden.role, "worker");
 });
 
 test("loadConfig resolves env references explicitly", async () => {
   const dir = await tempDir();
   const value = sampleConfig();
-  value.leader.env.ANTHROPIC_AUTH_TOKEN = "${AWETEAM_TEST_TOKEN}";
+  value.profiles.main.env.ANTHROPIC_AUTH_TOKEN = "${AWETEAM_TEST_TOKEN}";
   const configPath = await writeJsonConfig(dir, value);
 
   const previous = process.env.AWETEAM_TEST_TOKEN;
@@ -96,11 +98,31 @@ test("loadConfig resolves env references explicitly", async () => {
 test("loadConfig rejects missing env references", async () => {
   const dir = await tempDir();
   const value = sampleConfig();
-  value.leader.env.ANTHROPIC_AUTH_TOKEN = "${AWETEAM_MISSING_TOKEN}";
+  value.profiles.main.env.ANTHROPIC_AUTH_TOKEN = "${AWETEAM_MISSING_TOKEN}";
   const configPath = await writeJsonConfig(dir, value);
   delete process.env.AWETEAM_MISSING_TOKEN;
 
   await assert.rejects(loadConfig(configPath), /missing environment variable/);
+});
+
+test("loadConfig rejects legacy worker_profiles config shape", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, {
+    leader: {
+      name: "main",
+      provider: "claude",
+      command: "claude",
+    },
+    default_workers: ["codex"],
+    worker_profiles: {
+      codex: {
+        provider: "codex",
+        command: "codex",
+      },
+    },
+  });
+
+  await assert.rejects(loadConfig(configPath), /config.profiles is required/);
 });
 
 test("createRun writes explicit run artifacts and leader instructions", async () => {
@@ -148,7 +170,8 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
 
   const instructions = await readFile(join(run.runDir, "leader", "instructions.md"), "utf8");
   assert.match(instructions, /default worker pool/i);
-  assert.match(instructions, /aweteam spawn/);
+  assert.match(instructions, /leader\/outbox/);
+  assert.match(instructions, /"profile": "<profile-name>"/);
   assert.match(instructions, /Do not use Claude Code native Task/);
   assert.match(instructions, /coordinator-only leader/);
   assert.match(instructions, /Do not execute the user task yourself/);
@@ -158,7 +181,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
   assert.equal(resolved.leader_policy.mode, "delegate_only");
   assert.equal(resolved.leader_policy.plan_approval_required, true);
   assert.equal(resolved.leader_policy.native_subagents, "disallow");
-  assert.equal(resolved.worker_profiles.codex.role, "worker");
+  assert.equal(resolved.profiles.codex.role, "worker");
 });
 
 test("buildLeaderCommand disables Claude native subagents", () => {
@@ -266,6 +289,86 @@ test("createRun configures a tmux team console", async () => {
   assert.deepEqual(calls.at(-3), ["set-option", "-t", "aweteam-tmux-console", "mouse", "on"]);
   assert.deepEqual(calls.at(-2), ["bind-key", "-T", "prefix", "1", "select-pane", "-t", "%1"]);
   assert.deepEqual(calls.at(-1), ["select-layout", "-t", "aweteam-tmux-console", "main-vertical"]);
+});
+
+test("createRun can start a dispatcher window for leader-driven worker creation", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "dispatcher-pane",
+    attach: false,
+    dispatcher: true,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: calls.some((call) => call[0] === "new-window") ? "%9\n" : "%1\n", stderr: "", status: 0 };
+    },
+  });
+
+  const newWindow = calls.find((args) => args[0] === "new-window");
+  assert.deepEqual(newWindow.slice(0, 9), [
+    "new-window",
+    "-d",
+    "-t",
+    "aweteam-dispatcher-pane",
+    "-n",
+    "aweteam-dispatcher",
+    "-P",
+    "-F",
+    "#{pane_id}",
+  ]);
+  assert.match(newWindow.at(-1), / dispatch dispatcher-pane$/);
+  assert.deepEqual(await readdir(join(run.runDir, "leader", "outbox")), []);
+  const runJson = JSON.parse(await readFile(join(run.runDir, "run.json"), "utf8"));
+  assert.equal(runJson.dispatcher.pane, "%9");
+});
+
+test("dispatchOnce creates workers from leader outbox requests", async () => {
+  const dir = await tempDir();
+  const configPath = await writeJsonConfig(dir, sampleConfig());
+  const calls = [];
+  const run = await createRun({
+    task: "task",
+    configPath,
+    cwd: dir,
+    runId: "dispatch-once",
+    attach: false,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%1\n", stderr: "", status: 0 };
+    },
+  });
+  const requestPath = join(run.runDir, "leader", "outbox", "001.json");
+  await writeFile(requestPath, JSON.stringify({
+    profile: "cc-glm",
+    task: "Review backend behavior.",
+  }, null, 2), "utf8");
+
+  const handled = await dispatchOnce({
+    runId: run.runId,
+    cwd: dir,
+    tmux: async (args) => {
+      calls.push(args);
+      return { stdout: "%2\n", stderr: "", status: 0 };
+    },
+  });
+
+  assert.deepEqual(handled, [{ request: "001", worker: "worker-1", profile: "cc-glm", pane: "%2" }]);
+  assert.equal(await readFile(join(run.runDir, "leader", "tasks", "001.md"), "utf8"), "Review backend behavior.\n");
+  assert.match(await readFile(join(run.runDir, "leader", "inbox", "001.result.md"), "utf8"), /spawned: worker-1/);
+  await assert.rejects(readFile(requestPath, "utf8"), /ENOENT/);
+  const split = calls.find((args) => args[0] === "split-window");
+  assert.deepEqual(split.slice(0, 3), ["split-window", "-t", "%1"]);
+});
+
+test("buildDispatcherCommand re-enters aweteam from the run cwd", () => {
+  const command = buildDispatcherCommand({ cwd: "/tmp/project path", runId: "run-1" });
+  assert.match(command, /^cd '\/tmp\/project path' && /);
+  assert.match(command, / dispatch run-1$/);
 });
 
 test("spawnWorker serializes concurrent spawns with a run lock", async () => {
@@ -580,7 +683,7 @@ test("real tmux runner attaches with inherited terminal stdio", async () => {
   }]);
 });
 
-test("spawnWorker rejects profiles outside default_workers", async () => {
+test("spawnWorker rejects profiles outside workers", async () => {
   const dir = await tempDir();
   const configPath = await writeJsonConfig(dir, sampleConfig());
   const run = await createRun({
@@ -602,7 +705,7 @@ test("spawnWorker rejects profiles outside default_workers", async () => {
       cwd: dir,
       tmux: async () => ({ stdout: "%2\n", stderr: "", status: 0 }),
     }),
-    /not in default_workers/,
+    /not in workers/,
   );
 });
 
@@ -681,7 +784,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
   assert.deepEqual(split.slice(0, 6), [
     "split-window",
     "-t",
-    "aweteam-spawn-ok",
+    "%1",
     "-P",
     "-F",
     "#{pane_id}",

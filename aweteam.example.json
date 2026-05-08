@@ -1,16 +1,11 @@
 {
-  "leader": {
-    "name": "main",
-    "provider": "claude",
-    "command": "claude",
-    "model": "sonnet"
-  },
-  "default_workers": [
+  "leader": "claudecode-official",
+  "workers": [
     "cc-glm",
     "codex",
     "claudecode-official"
   ],
-  "worker_profiles": {
+  "profiles": {
     "cc-glm": {
       "provider": "claude",
       "command": "claude",

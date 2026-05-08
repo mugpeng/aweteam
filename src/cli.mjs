@@ -2,6 +2,8 @@ import {
   createRun,
   collectLeaderSummary,
   defaultConfigPath,
+  dispatchOnce,
+  dispatchRun,
   displayRunStatus,
   focusRunPane,
   spawnWorker,
@@ -26,7 +28,7 @@ export async function runCli({
     if (command.startsWith("--")) {
       const parsed = parseRunArgs(argv, cwd, { allowGeneratedTask: true });
       applyAttachPolicy(parsed, isTTY);
-      const run = await createRun({ ...parsed, cwd, tmux });
+      const run = await createRun({ ...parsed, cwd, tmux, dispatcher: true });
       stdout(`run_id: ${run.runId}`);
       stdout(`session: ${run.sessionName}`);
       stdout(`leader: ${run.leaderPane}`);
@@ -36,7 +38,7 @@ export async function runCli({
     if (command === "run") {
       const parsed = parseRunArgs(argv.slice(1), cwd);
       applyAttachPolicy(parsed, isTTY);
-      const run = await createRun({ ...parsed, cwd, tmux });
+      const run = await createRun({ ...parsed, cwd, tmux, dispatcher: true });
       stdout(`run_id: ${run.runId}`);
       stdout(`session: ${run.sessionName}`);
       stdout(`leader: ${run.leaderPane}`);
@@ -49,6 +51,21 @@ export async function runCli({
       stdout(`worker: ${worker.name}`);
       stdout(`profile: ${worker.profile}`);
       stdout(`pane: ${worker.pane}`);
+      return 0;
+    }
+    if (command === "dispatch") {
+      const runId = argv[1];
+      if (!runId) throw new Error("dispatch requires <run-id>");
+      if (argv.includes("--once")) {
+        const handled = await dispatchOnce({ runId, cwd, tmux });
+        for (const item of handled) {
+          stdout(item.error
+            ? `error: ${item.request}\t${item.error}`
+            : `spawned: ${item.request}\t${item.worker}\t${item.profile}\t${item.pane}`);
+        }
+      } else {
+        await dispatchRun({ runId, cwd, tmux });
+      }
       return 0;
     }
     if (command === "status") {
@@ -167,6 +184,7 @@ Usage:
   aweteam --config aweteam.json
   aweteam run <task> [--config aweteam.json] [--run-id id] [--no-attach]
   aweteam spawn --run-id id --profile name --task-file path
+  aweteam dispatch <run-id> [--once]
   aweteam status <run-id>
   aweteam focus <run-id> <leader|worker-name|profile>
   aweteam summarize <run-id>
@@ -175,8 +193,8 @@ Usage:
 Workflow:
   1. Configure one leader and a default worker pool in aweteam.json.
   2. Start aweteam; it opens a tmux session focused on leader/main.
-  3. Discuss the plan with the leader in its real CLI.
-  4. After you confirm, the leader writes task files and calls aweteam spawn.
+  3. Describe the task and discuss the plan with the leader in its real CLI.
+  4. After you confirm, the leader writes outbox requests; aweteam creates workers.
   5. Switch between leader/main and worker-N panes directly in tmux.
 
 Commands:
@@ -187,7 +205,11 @@ Commands:
       Start a leader session with an explicit topic.
 
   aweteam spawn --run-id <id> --profile <name> --task-file <path>
-      Create one worker pane from an allowed default_workers profile.
+      Create one worker pane from an allowed workers profile. This is a
+      low-level debugging command; the normal workflow is leader-driven dispatch.
+
+  aweteam dispatch <run-id> [--once]
+      Internal dispatcher. It watches leader/outbox and creates worker panes.
 
   aweteam status <run-id>
       Refresh and print the run id, tmux session, leader pane, worker states, and worker panes.

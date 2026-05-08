@@ -11,6 +11,7 @@ worker panes from configured profiles, and writes explicit run artifacts under
 ```bash
 aweteam --config aweteam.json
 aweteam run "task" --config aweteam.json
+aweteam dispatch <run-id> [--once]
 aweteam spawn --run-id <run-id> --profile <name> --task-file <path>
 aweteam status <run-id>
 aweteam status <run-id> --watch
@@ -19,9 +20,10 @@ aweteam summarize <run-id>
 aweteam collect-summary <run-id>
 ```
 
-`spawn` is the small local protocol used by the leader after the user confirms a
-plan. It only accepts profiles listed in `default_workers` and enforces each
-profile's `max_instances`.
+The normal workflow is leader-driven. The leader writes one JSON request per
+worker under `leader/outbox`, and the aweteam dispatcher creates the worker
+panes. `spawn` remains available as a low-level debugging command; it only
+accepts profiles listed in `workers` and enforces each profile's `max_instances`.
 
 For Claude Code leaders, aweteam starts the leader with native `Task` delegation
 disabled and injects instructions that "agent" means an aweteam tmux worker
@@ -34,6 +36,8 @@ injected as shell environment variables rather than `--settings`.
 
 Each run is a tmux team console. The leader pane is selected by `prefix+1`, and
 worker panes are selected by `prefix+2` through `prefix+9` as they are spawned.
+`aweteam --config` and `aweteam run` also start an internal dispatcher window
+inside the same tmux session.
 Worker panes run the interactive agent UI and stay open after completing their
 assigned `task.md`, so the worker conversation remains visible in tmux.
 `aweteam status` refreshes worker completion state from `result.md`;
@@ -47,19 +51,19 @@ The MVP config format is JSON:
 
 ```json
 {
-  "leader": {
-    "name": "main",
-    "provider": "claude",
-    "command": "claude",
-    "model": "sonnet"
-  },
-  "default_workers": ["codex"],
-  "worker_profiles": {
+  "leader": "claudecode-official",
+  "workers": ["codex"],
+  "profiles": {
     "codex": {
       "provider": "codex",
       "command": "codex",
       "model": "gpt-5.4-mini",
       "max_instances": 1
+    },
+    "claudecode-official": {
+      "provider": "claude",
+      "command": "claude",
+      "model": "sonnet"
     }
   }
 }
@@ -97,16 +101,26 @@ If you want to provide an explicit topic at startup, use:
 aweteam run "创建三个 agent 实现 xx" --config aweteam.json
 ```
 
-In the leader CLI, ask it to choose workers only from the configured default
-worker pool. After you confirm the plan, the leader should create task files and
-call:
+In the leader CLI, describe the task naturally and ask it to choose workers only
+from the configured default worker pool. After you confirm the plan, the leader
+should create one outbox request per worker:
 
-```bash
-aweteam spawn \
-  --run-id <run-id> \
-  --profile <profile-name> \
-  --task-file <task-file>
+```json
+{
+  "profile": "cc-glm",
+  "task": "Exact assignment for this worker."
+}
 ```
+
+The request file path is:
+
+```text
+.aweteam/runs/<run-id>/leader/outbox/<request-id>.json
+```
+
+The dispatcher watches that directory, creates the worker pane, and writes the
+creation result under `leader/inbox`. You do not need to run `aweteam spawn`
+from another terminal in the normal workflow.
 
 Check a run from another terminal:
 
@@ -179,27 +193,28 @@ The leader should propose a plan, for example:
 3. codex-gpt5.4-mini: review edge cases and security issues
 ```
 
-After you confirm, the leader writes task files such as:
+After you confirm, the leader writes request files such as:
 
 ```text
-.aweteam/runs/<run-id>/tasks/login-backend.md
-.aweteam/runs/<run-id>/tasks/login-frontend.md
-.aweteam/runs/<run-id>/tasks/login-review.md
+.aweteam/runs/<run-id>/leader/outbox/login-backend.json
+.aweteam/runs/<run-id>/leader/outbox/login-frontend.json
+.aweteam/runs/<run-id>/leader/outbox/login-review.json
 ```
 
-Then the leader calls:
+Each request contains the target profile and assignment:
 
-```bash
-aweteam spawn --run-id <run-id> --profile cc-glm --task-file .aweteam/runs/<run-id>/tasks/login-backend.md
-aweteam spawn --run-id <run-id> --profile cc-gemini --task-file .aweteam/runs/<run-id>/tasks/login-frontend.md
-aweteam spawn --run-id <run-id> --profile codex-gpt5.4-mini --task-file .aweteam/runs/<run-id>/tasks/login-review.md
+```json
+{
+  "profile": "codex-gpt5.4-mini",
+  "task": "Review login edge cases and security issues. Write your final answer to result.md."
+}
 ```
 
-This profile plus task-file pair is the assignment protocol: the leader controls
-which configured worker gets which task by choosing the profile and writing that
-worker's task file. aweteam validates each profile against `default_workers`,
-checks `max_instances`, and creates `worker-1`, `worker-2`, and `worker-3` tmux
-panes.
+This profile plus task text is the assignment protocol: the leader controls
+which configured worker gets which task by choosing the profile and writing the
+worker's assignment. aweteam validates each profile against `workers`, checks
+`max_instances`, and creates `worker-1`, `worker-2`, and `worker-3` tmux panes
+automatically.
 
 From another terminal:
 

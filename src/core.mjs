@@ -4,6 +4,7 @@ import {
   access,
   copyFile,
   mkdir,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -16,16 +17,21 @@ export async function loadConfig(configPath) {
   const parsed = JSON.parse(raw);
   validateConfig(parsed);
 
-  const workerProfiles = {};
-  for (const [name, profile] of Object.entries(parsed.worker_profiles)) {
-    workerProfiles[name] = normalizeProfile(name, profile, "worker");
+  const leaderName = selectedLeaderProfileName(parsed.leader);
+  const profiles = {};
+  for (const [name, profile] of Object.entries(parsed.profiles)) {
+    const role = name === leaderName ? "leader" : "worker";
+    profiles[name] = normalizeProfile(name, profile, role);
+  }
+  for (const name of parsed.workers) {
+    profiles[name] = normalizeProfile(name, parsed.profiles[name], "worker");
   }
 
   return {
-    leader: normalizeProfile(parsed.leader.name ?? "main", parsed.leader, "leader"),
+    leader: profiles[leaderName],
     leader_policy: normalizeLeaderPolicy(parsed.leader_policy),
-    default_workers: [...parsed.default_workers],
-    worker_profiles: workerProfiles,
+    workers: [...parsed.workers],
+    profiles,
   };
 }
 
@@ -39,6 +45,9 @@ export async function createRun(options) {
   const leaderDir = join(runDir, "leader");
 
   await mkdir(leaderDir, { recursive: true });
+  await mkdir(join(leaderDir, "outbox"), { recursive: true });
+  await mkdir(join(leaderDir, "inbox"), { recursive: true });
+  await mkdir(join(leaderDir, "tasks"), { recursive: true });
   await mkdir(join(runDir, "workers"), { recursive: true });
 
   const task = options.task ?? "";
@@ -104,6 +113,17 @@ export async function createRun(options) {
     pane: leaderPane,
   });
 
+  if (options.dispatcher === true) {
+    const dispatcherPane = await startDispatcherPane(options.tmux, { cwd, runId, sessionName, runDir });
+    runJson.dispatcher = { pane: dispatcherPane };
+    await writeJson(join(runDir, "run.json"), runJson);
+    await appendEvent(runDir, {
+      type: "dispatcher.started",
+      run_id: runId,
+      pane: dispatcherPane,
+    });
+  }
+
   if (options.attach !== false) {
     await tmuxOrThrow(options.tmux, ["attach-session", "-t", sessionName]);
   }
@@ -119,10 +139,10 @@ export async function spawnWorker(options) {
     const runJson = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
     const profileName = options.profileName;
 
-    if (!config.default_workers.includes(profileName)) {
-      throw new Error(`worker profile "${profileName}" is not in default_workers`);
+    if (!config.workers.includes(profileName)) {
+      throw new Error(`worker profile "${profileName}" is not in workers`);
     }
-    const profile = config.worker_profiles[profileName];
+    const profile = config.profiles[profileName];
     if (!profile) {
       throw new Error(`worker profile "${profileName}" is not defined`);
     }
@@ -153,7 +173,7 @@ export async function spawnWorker(options) {
     const pane = await tmuxOrThrow(options.tmux, [
       "split-window",
       "-t",
-      runJson.session_name,
+      runJson.leader.pane,
       "-P",
       "-F",
       "#{pane_id}",
@@ -195,6 +215,63 @@ export async function spawnWorker(options) {
 
     return { name: workerName, profile: profileName, pane: paneId, dir: workerDir };
   });
+}
+
+export async function dispatchOnce({ runId, cwd = process.cwd(), tmux } = {}) {
+  const resolvedCwd = resolve(cwd);
+  const runDir = join(resolvedCwd, ".aweteam", "runs", runId);
+  const outboxDir = join(runDir, "leader", "outbox");
+  const inboxDir = join(runDir, "leader", "inbox");
+  const taskDir = join(runDir, "leader", "tasks");
+  await mkdir(inboxDir, { recursive: true });
+  await mkdir(taskDir, { recursive: true });
+
+  let entries = [];
+  try {
+    entries = await readdir(outboxDir);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const handled = [];
+  for (const entry of entries.filter((name) => name.endsWith(".json")).sort()) {
+    const requestId = entry.slice(0, -".json".length);
+    const requestPath = join(outboxDir, entry);
+    try {
+      const request = JSON.parse(await readFile(requestPath, "utf8"));
+      const profileName = String(request.profile ?? "");
+      const taskText = String(request.task ?? "").trim();
+      if (!profileName) throw new Error("dispatch request requires profile");
+      if (!taskText) throw new Error("dispatch request requires task");
+
+      const taskFile = join(taskDir, `${requestId}.md`);
+      await writeFile(taskFile, `${taskText}\n`, "utf8");
+      const worker = await spawnWorker({ runId, cwd: resolvedCwd, profileName, taskFile, tmux });
+      await writeFile(join(inboxDir, `${requestId}.result.md`), [
+        `spawned: ${worker.name}`,
+        `profile: ${worker.profile}`,
+        `pane: ${worker.pane}`,
+        `task: ${taskFile}`,
+        "",
+      ].join("\n"), "utf8");
+      await rm(requestPath);
+      handled.push({ request: requestId, worker: worker.name, profile: worker.profile, pane: worker.pane });
+    } catch (error) {
+      await writeFile(join(inboxDir, `${requestId}.error.md`), `${error instanceof Error ? error.message : String(error)}\n`, "utf8");
+      await rm(requestPath, { force: true });
+      handled.push({ request: requestId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return handled;
+}
+
+export async function dispatchRun({ runId, cwd = process.cwd(), tmux, intervalMs = 1000 } = {}) {
+  while (true) {
+    await dispatchOnce({ runId, cwd, tmux });
+    await refreshRunStatus({ runId, cwd, tmux });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, intervalMs));
+  }
 }
 
 export async function statusRun({ runId, cwd = process.cwd(), tmux } = {}) {
@@ -417,6 +494,32 @@ async function pipePane(tmux, paneId, logPath) {
   ]);
 }
 
+async function startDispatcherPane(tmux, { cwd, runId, sessionName, runDir }) {
+  const command = buildDispatcherCommand({ cwd, runId });
+  const pane = await tmuxOrThrow(tmux, [
+    "new-window",
+    "-d",
+    "-t",
+    sessionName,
+    "-n",
+    "aweteam-dispatcher",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    command,
+  ]);
+  const paneId = pane.stdout.trim() || "dispatcher";
+  await pipePane(tmux, paneId, join(runDir, "dispatcher.log"));
+  return paneId;
+}
+
+export function buildDispatcherCommand({ cwd, runId }) {
+  const launcher = process.argv[1]
+    ? `${shellQuote(process.execPath)} ${shellQuote(process.argv[1])}`
+    : "aweteam";
+  return `cd ${shellQuote(cwd)} && ${launcher} dispatch ${shellQuote(runId)}`;
+}
+
 async function configureTmuxTeamConsole(tmux, { sessionName, leaderPane, workers }) {
   await tmuxOrThrow(tmux, ["select-pane", "-t", leaderPane, "-T", "leader main"]);
   for (const worker of workers) {
@@ -434,20 +537,30 @@ function validateConfig(config) {
   if (!config || typeof config !== "object") {
     throw new Error("config must be an object");
   }
-  if (!config.leader || typeof config.leader !== "object") {
-    throw new Error("config.leader is required");
+  if (!config.profiles || typeof config.profiles !== "object") {
+    throw new Error("config.profiles is required");
   }
-  if (!Array.isArray(config.default_workers)) {
-    throw new Error("config.default_workers must be an array");
+  const leaderName = selectedLeaderProfileName(config.leader);
+  if (!leaderName) {
+    throw new Error("config.leader must select a profile");
   }
-  if (!config.worker_profiles || typeof config.worker_profiles !== "object") {
-    throw new Error("config.worker_profiles is required");
+  if (!config.profiles[leaderName]) {
+    throw new Error(`leader profile "${leaderName}" has no profiles entry`);
   }
-  for (const name of config.default_workers) {
-    if (!config.worker_profiles[name]) {
-      throw new Error(`default worker "${name}" has no worker_profiles entry`);
+  if (!Array.isArray(config.workers)) {
+    throw new Error("config.workers must be an array");
+  }
+  for (const name of config.workers) {
+    if (!config.profiles[name]) {
+      throw new Error(`worker profile "${name}" has no profiles entry`);
     }
   }
+}
+
+function selectedLeaderProfileName(leader) {
+  if (typeof leader === "string") return leader;
+  if (leader && typeof leader === "object") return leader.profile ?? leader.name;
+  return "";
 }
 
 function normalizeProfile(name, profile, role) {
@@ -520,9 +633,9 @@ function shellQuote(value) {
 }
 
 function renderLeaderInstructions({ runId, config, task }) {
-  const pool = config.default_workers
+  const pool = config.workers
     .map((name) => {
-      const profile = config.worker_profiles[name];
+      const profile = config.profiles[name];
       return `- ${name}: provider=${profile.provider}, model=${profile.model ?? "default"}, max_instances=${profile.max_instances ?? 1}`;
     })
     .join("\n");
@@ -545,16 +658,35 @@ Default worker pool:
 ${pool}
 
 When the user confirms a plan and asks you to create workers, write each worker
-task to a task file under this run directory, then call:
+request as one JSON file under this outbox directory:
 
-\`\`\`bash
-aweteam spawn --run-id ${runId} --profile <profile-name> --task-file <task-file>
+\`\`\`text
+.aweteam/runs/${runId}/leader/outbox/<request-id>.json
+\`\`\`
+
+Use this JSON shape:
+
+\`\`\`json
+{
+  "profile": "<profile-name>",
+  "task": "Exact assignment for this worker."
+}
+\`\`\`
+
+Use your shell/Bash tool from this leader page to create these JSON files. The
+user should not need to run aweteam spawn from another terminal for normal
+worker creation.
+
+The aweteam dispatcher watches the outbox and creates worker panes for you.
+It writes creation results back under:
+
+\`\`\`text
+.aweteam/runs/${runId}/leader/inbox/
 \`\`\`
 
 This is the assignment protocol: choose the worker profile explicitly and put
-that worker's exact assignment in the task file. To assign different work to
-different workers, create one task file per worker and call aweteam spawn once
-per assignment.
+that worker's exact assignment in the JSON task. To assign different work to
+different workers, create one JSON request per worker.
 
 Only use profiles from the default worker pool. Do not create ad-hoc provider
 commands. Respect max_instances.

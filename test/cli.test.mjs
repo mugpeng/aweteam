@@ -13,14 +13,14 @@ async function tempDir() {
 async function writeConfig(dir) {
   const configPath = join(dir, "aweteam.json");
   await writeFile(configPath, JSON.stringify({
-    leader: {
-      name: "main",
-      provider: "claude",
-      command: "claude",
-      model: "sonnet",
-    },
-    default_workers: ["codex"],
-    worker_profiles: {
+    leader: "main",
+    workers: ["codex"],
+    profiles: {
+      main: {
+        provider: "claude",
+        command: "claude",
+        model: "sonnet",
+      },
       codex: {
         provider: "codex",
         command: "codex",
