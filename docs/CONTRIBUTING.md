@@ -6,21 +6,8 @@ visible, explicit, and easy to debug.
 This guide describes how to evolve the project without turning it into a larger
 framework than it needs to be.
 
-For stable runtime semantics, see [DESIGN.md](./DESIGN.md).
-
-## Project Direction
-
-`aweteam` is not trying to become a full agent platform.
-
-The project is intentionally centered on a small set of responsibilities:
-
-- start a real leader CLI in tmux
-- let that leader create worker panes from configured profiles
-- keep leader and worker conversations inspectable
-- persist run artifacts that prove what happened
-
-New features should preserve that focus. Prefer improving the existing tmux
-handoff over adding new layers, hidden schedulers, or parallel command surfaces.
+For stable runtime semantics, see [DESIGN.md](./DESIGN.md). This document is
+about how to make and review changes.
 
 ## Development Setup
 
@@ -37,6 +24,17 @@ npm test
 The package is currently a small ESM Node CLI. Tests use the built-in
 `node:test` runner.
 
+## Engineering Taste
+
+Prefer solutions that are simple, clear, decoupled, honest, and durable.
+
+- Simple: make the smallest change that solves the real problem.
+- Clear: optimize for the next reader, not for cleverness.
+- Decoupled: keep boundaries clean, but do not add abstractions without a real need.
+- Honest: make complexity, state, side effects, assumptions, and failure modes visible; do not hide complexity or create extra complexity.
+- Durable: choose behavior that is easy to maintain, test, and extend.
+- Reason from first principles: identify the real problem, hard constraints, and known facts before reaching for patterns, abstractions, or prior solutions.
+
 ## Code Style
 
 Keep the codebase plain and readable:
@@ -50,22 +48,16 @@ Keep the codebase plain and readable:
 When in doubt, choose the behavior that makes a failed run easier to inspect
 from tmux and `.aweteam/runs/<run-id>/`.
 
-## Runtime Rules
+## Runtime Changes
 
-Changes should preserve these invariants:
+Runtime behavior is defined in [DESIGN.md](./DESIGN.md). Before changing command
+semantics, config behavior, provider launch behavior, tmux pane behavior, or run
+artifact paths, read that document and decide whether the change preserves the
+current model.
 
-- the leader is coordinator-only
-- normal worker creation happens through the leader pane
-- workers come only from the configured `workers` pool
-- `max_instances` is enforced
-- a run freezes `config.resolved.json`
-- worker assignments are written to `task.md`
-- worker final answers are written to `result.md`
-- `events.jsonl` remains a useful debugging record
-
-Provider-specific behavior is part of the contract. If you change how Claude,
-Codex, or custom profiles are launched, update tests and documentation in the
-same change.
+Provider-specific behavior is part of the runtime contract. If you change how
+Claude, Codex, or custom profiles are launched, update tests and documentation
+in the same change.
 
 ## Documentation
 
