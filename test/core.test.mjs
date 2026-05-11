@@ -38,7 +38,6 @@ function sampleConfig() {
       main: {
         provider: "claude",
         command: "claude",
-        model: "sonnet",
         env: {
           ANTHROPIC_MODEL: "sonnet",
         },
@@ -46,8 +45,10 @@ function sampleConfig() {
       "cc-glm": {
         provider: "claude",
         command: "claude",
-        model: "glm-4.6",
         max_instances: 2,
+        env: {
+          ANTHROPIC_MODEL: "glm-4.6",
+        },
       },
       codex: {
         provider: "codex",
@@ -265,7 +266,7 @@ test("spawnWorker starts an interactive agent pane with an assignment prompt", a
   });
 
   const split = calls.find((args) => args[0] === "split-window");
-  assert.match(split.at(-1), /^claude --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
+  assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
   assert.match(split.at(-1), /task\.md/);
   assert.match(split.at(-1), /result\.md/);
   assert.match(split.at(-1), /Do not modify project or source files/);
@@ -858,7 +859,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-F",
     "#{pane_id}",
   ]);
-  assert.match(split.at(-1), /^claude --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
+  assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit '# aweteam worker assignment/);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
   const profile = JSON.parse(await readFile(join(worker.dir, "profile.json"), "utf8"));

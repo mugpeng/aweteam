@@ -703,7 +703,10 @@ function renderLeaderInstructions({ runId, config, task }) {
   const pool = config.workers
     .map((name) => {
       const profile = config.profiles[name];
-      return `- ${name}: provider=${profile.provider}, model=${profile.model ?? "default"}, max_instances=${profile.max_instances ?? 1}`;
+      const model = profile.provider === "claude"
+        ? (profile.env?.ANTHROPIC_MODEL ?? "default")
+        : (profile.model ?? "default");
+      return `- ${name}: provider=${profile.provider}, model=${model}, max_instances=${profile.max_instances ?? 1}`;
     })
     .join("\n");
   return `# aweteam leader instructions

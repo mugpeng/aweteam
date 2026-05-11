@@ -9,10 +9,9 @@
     "cc-glm": {
       "provider": "claude",
       "command": "claude",
-      "model": "glm-4.6",
       "max_instances": 2,
       "env": {
-        "ANTHROPIC_BASE_URL": "${GLM_ANTHROPIC_BASE_URL}",
+        "ANTHROPIC_BASE_URL": "https://your-glm-compatible-endpoint",
         "ANTHROPIC_AUTH_TOKEN": "${GLM_ANTHROPIC_AUTH_TOKEN}",
         "ANTHROPIC_MODEL": "glm-4.6"
       }
@@ -26,8 +25,10 @@
     "claudecode-official": {
       "provider": "claude",
       "command": "claude",
-      "model": "sonnet",
-      "max_instances": 1
+      "max_instances": 1,
+      "env": {
+        "ANTHROPIC_MODEL": "sonnet"
+      }
     }
   }
 }

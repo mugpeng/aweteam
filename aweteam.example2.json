@@ -1,0 +1,52 @@
+{
+  "leader": "cc-glm",
+  "workers": [
+    "cc-glm",
+    "cc-gemini",
+    "cc-xiaomi",
+    "codex-gpt5.4-mini"
+  ],
+  "profiles": {
+    "cc-glm": {
+      "provider": "claude",
+      "command": "claude",
+      "max_instances": 2,
+      "env": {
+        "ANTHROPIC_MODEL": "glm-5.1",
+        "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": "${GLM_ANTHROPIC_AUTH_TOKEN}"
+      }
+    },
+    "cc-gemini": {
+      "provider": "claude",
+      "command": "claude",
+      "max_instances": 2,
+      "env": {
+        "ANTHROPIC_MODEL": "gemini-3.1-pro-preview",
+        "ANTHROPIC_BASE_URL": "https://openclaw.chatgo.best",
+        "ANTHROPIC_AUTH_TOKEN": "${GEMINI_ANTHROPIC_AUTH_TOKEN}"
+      }
+    },
+    "cc-xiaomi": {
+      "provider": "claude",
+      "command": "claude",
+      "env": {
+        "ANTHROPIC_MODEL": "mimo-v2.5-pro",
+        "ANTHROPIC_BASE_URL": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": "${XIAOMI_ANTHROPIC_AUTH_TOKEN}"
+      }
+    },
+    "codex-gpt5.4": {
+      "provider": "codex",
+      "command": "codex",
+      "model": "gpt-5.4",
+      "max_instances": 2
+    },
+    "codex-gpt5.4-mini": {
+      "provider": "codex",
+      "command": "codex",
+      "model": "gpt-5.4-mini",
+      "max_instances": 2
+    }
+  }
+}

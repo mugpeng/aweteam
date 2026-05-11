@@ -42,7 +42,6 @@ If your config uses environment-backed profiles, export the required variables
 before starting a run. For example:
 
 ```bash
-export GLM_ANTHROPIC_BASE_URL="https://your-glm-compatible-endpoint"
 export GLM_ANTHROPIC_AUTH_TOKEN="your-token"
 ```
 
@@ -94,11 +93,75 @@ Minimal shape:
     "claudecode-official": {
       "provider": "claude",
       "command": "claude",
-      "model": "sonnet"
+      "env": {
+        "ANTHROPIC_MODEL": "sonnet"
+      }
     }
   }
 }
 ```
+
+For `claude` provider profiles, the model is controlled via `env.ANTHROPIC_MODEL`
+(passed to Claude Code through `--settings`). The `model` field is only used by
+`codex` provider profiles (passed as `--model`).
+
+Optional Claude defaults such as `ANTHROPIC_DEFAULT_HAIKU_MODEL`,
+`ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_OPUS_MODEL` are not
+configured by default.
+
+If you want Claude Code to use a lighter model for lightweight or background
+functionality, you can manually add `ANTHROPIC_DEFAULT_HAIKU_MODEL` to the
+profile `env`. Example:
+
+```json
+{
+  "provider": "claude",
+  "command": "claude",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "${XIAOMI_ANTHROPIC_AUTH_TOKEN}",
+    "ANTHROPIC_MODEL": "mimo-v2.5-pro",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5"
+  }
+}
+```
+
+This keeps the main model on `mimo-v2.5-pro` while allowing Claude Code to use
+`mimo-v2.5` for lighter or background tasks.
+
+### Environment variables
+
+Profiles can reference shell environment variables with `${VAR_NAME}` syntax.
+Values are resolved at startup; missing variables cause an error.
+
+For third-party API proxies, set the endpoint and token via env vars:
+
+```bash
+export GLM_ANTHROPIC_AUTH_TOKEN="your-token"
+```
+
+Then reference it in the profile config:
+
+```json
+{
+  "provider": "claude",
+  "command": "claude",
+  "max_instances": 2,
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-glm-compatible-endpoint",
+    "ANTHROPIC_AUTH_TOKEN": "${GLM_ANTHROPIC_AUTH_TOKEN}",
+    "ANTHROPIC_MODEL": "glm-4.6"
+  }
+}
+```
+
+Key environment variables for Claude Code:
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_MODEL` | Primary model selection |
+| `ANTHROPIC_AUTH_TOKEN` | API authentication token (use `${VAR}` for secrets) |
+| `ANTHROPIC_BASE_URL` | API endpoint (for proxies, hardcoded is fine) |
 
 Only profiles listed in `workers` can be spawned as workers. `max_instances`
 limits how many workers can be created from a profile in one run.
