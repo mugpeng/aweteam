@@ -12,6 +12,10 @@ profile 里创建 worker pane，并把每次运行的显式记录写到
 
 **语言:** [English](./README.md) | 简体中文
 
+## 展示
+
+![aweteam tmux leader and worker panes](./example.png)
+
 ## 安装
 
 需要 Node.js 20 或更高版本，以及 tmux。

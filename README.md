@@ -13,6 +13,10 @@ conversations remain visible in their own panes.
 
 **Languages:** English | [Chinese](./README_CN.md)
 
+## Demo
+
+![aweteam tmux leader and worker panes](./example.png)
+
 ## Install
 
 Requires Node.js 20 or later and tmux.
