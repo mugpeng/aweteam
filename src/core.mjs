@@ -487,7 +487,7 @@ export function buildWorkerCommand(profile, taskPath, assignmentPrompt) {
   if (profile.provider === "claude") {
     const extraArgs = ["--disallowedTools", "Edit,MultiEdit,NotebookEdit"];
     if (assignmentPrompt) {
-      extraArgs.push(assignmentPrompt);
+      extraArgs.push("--append-system-prompt", assignmentPrompt);
     }
     return buildCommand(profile, extraArgs);
   }
