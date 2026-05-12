@@ -183,7 +183,13 @@ export async function spawnWorker(options) {
     const paneId = pane.stdout.trim() || workerName;
     await pipePane(options.tmux, paneId, join(workerDir, "stdout.log"));
     if (profile.provider === "claude") {
-      await sendWorkerAssignment(options.tmux, paneId, assignmentPrompt);
+      if (!options.tmux) {
+        await waitForPanePrompt(paneId);
+      }
+      await sendWorkerAssignment(options.tmux, paneId, renderClaudeWorkerStartPrompt({
+        taskPath: join(workerDir, "task.md"),
+        resultPath: join(workerDir, "result.md"),
+      }));
     }
 
     const workerStatus = {
@@ -561,7 +567,19 @@ async function sendLeaderMessage(tmux, pane, message) {
 
 async function sendWorkerAssignment(tmux, pane, message) {
   await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "-l", "--", message]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
   await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "Enter"]);
+}
+
+async function waitForPanePrompt(paneId, { timeoutMs = 15000, pollMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await realTmux(["capture-pane", "-p", "-J", "-t", paneId, "-S", "-80"]);
+    if (result.status === 0 && result.stdout.includes("❯")) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 async function startDispatcherPane(tmux, { cwd, runId, sessionName, runDir }) {
@@ -803,6 +821,15 @@ function renderWorkerAssignment({ workerName, profileName, taskPath, resultPath 
     "",
     "Keep this agent session open after completing the task so the user can inspect or continue the worker conversation in tmux.",
   ].join("\n");
+}
+
+function renderClaudeWorkerStartPrompt({ taskPath, resultPath }) {
+  return [
+    `Read your task from ${taskPath}.`,
+    "Do not modify project or source files.",
+    `Write your final answer to ${resultPath}.`,
+    "Keep the session open after finishing.",
+  ].join(" ");
 }
 
 async function writeJson(path, value) {

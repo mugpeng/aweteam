@@ -269,11 +269,11 @@ test("spawnWorker starts an interactive agent pane with an assignment prompt", a
   assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit$/);
   const assignmentSend = calls.find((args) => args[0] === "send-keys" && args[3] === "-l");
   assert.deepEqual(assignmentSend.slice(0, 5), ["send-keys", "-t", "%2", "-l", "--"]);
-  assert.match(assignmentSend.at(-1), /^# aweteam worker assignment/);
-  assert.match(assignmentSend.at(-1), /task\.md/);
-  assert.match(assignmentSend.at(-1), /result\.md/);
-  assert.match(assignmentSend.at(-1), /Do not modify project or source files/);
-  assert.match(assignmentSend.at(-1), /show a concise final answer in this worker pane/);
+  assert.doesNotMatch(assignmentSend.at(-1), /\n/);
+  assert.match(assignmentSend.at(-1), /Read your task from .*task\.md\./);
+  assert.match(assignmentSend.at(-1), /Do not modify project or source files\./);
+  assert.match(assignmentSend.at(-1), /Write your final answer to .*result\.md\./);
+  assert.match(assignmentSend.at(-1), /Keep the session open after finishing\./);
   assert.deepEqual(calls.find((args) => args[0] === "send-keys" && args[3] === "Enter"), ["send-keys", "-t", "%2", "Enter"]);
 });
 
@@ -864,7 +864,8 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
   ]);
   assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit$/);
   const assignmentSend = calls.find((args) => args[0] === "send-keys" && args[3] === "-l");
-  assert.match(assignmentSend.at(-1), /^# aweteam worker assignment/);
+  assert.doesNotMatch(assignmentSend.at(-1), /\n/);
+  assert.match(assignmentSend.at(-1), /Read your task from .*task\.md\./);
 
   assert.equal(await readFile(join(worker.dir, "task.md"), "utf8"), "implement the worker task");
   const profile = JSON.parse(await readFile(join(worker.dir, "profile.json"), "utf8"));
