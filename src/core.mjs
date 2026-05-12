@@ -164,12 +164,13 @@ export async function spawnWorker(options) {
     await writeFile(join(workerDir, "stderr.log"), "", "utf8");
     await writeFile(join(workerDir, "result.md"), "", "utf8");
 
-    const workerCommand = buildWorkerCommand(profile, join(workerDir, "task.md"), renderWorkerAssignment({
+    const assignmentPrompt = renderWorkerAssignment({
       workerName,
       profileName,
       taskPath: join(workerDir, "task.md"),
       resultPath: join(workerDir, "result.md"),
-    }));
+    });
+    const workerCommand = buildWorkerCommand(profile, join(workerDir, "task.md"), assignmentPrompt);
     const pane = await tmuxOrThrow(options.tmux, [
       "split-window",
       "-t",
@@ -181,6 +182,9 @@ export async function spawnWorker(options) {
     ]);
     const paneId = pane.stdout.trim() || workerName;
     await pipePane(options.tmux, paneId, join(workerDir, "stdout.log"));
+    if (profile.provider === "claude") {
+      await sendWorkerAssignment(options.tmux, paneId, assignmentPrompt);
+    }
 
     const workerStatus = {
       role: "worker",
@@ -485,11 +489,7 @@ function normalizeLeaderPolicy(policy = {}) {
 
 export function buildWorkerCommand(profile, taskPath, assignmentPrompt) {
   if (profile.provider === "claude") {
-    const extraArgs = ["--disallowedTools", "Edit,MultiEdit,NotebookEdit"];
-    if (assignmentPrompt) {
-      extraArgs.push("--append-system-prompt", assignmentPrompt);
-    }
-    return buildCommand(profile, extraArgs);
+    return buildCommand(profile, ["--disallowedTools", "Edit,MultiEdit,NotebookEdit"]);
   }
   if (profile.provider === "codex") {
     const modelArgs = profile.model ? ["--model", profile.model] : [];
@@ -555,6 +555,11 @@ async function pipePane(tmux, paneId, logPath) {
 }
 
 async function sendLeaderMessage(tmux, pane, message) {
+  await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "-l", "--", message]);
+  await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "Enter"]);
+}
+
+async function sendWorkerAssignment(tmux, pane, message) {
   await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "-l", "--", message]);
   await tmuxOrThrow(tmux, ["send-keys", "-t", pane, "Enter"]);
 }
