@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="logo/hero.png" alt="aweteam" width="600">
   <h1>aweteam</h1>
   <p><strong>本地 AI coding agent 团队的轻量 tmux 交接接口。</strong></p>
   <p>启动一个 leader，把任务分给配置好的 worker，对话保留在 tmux pane 里。</p>
