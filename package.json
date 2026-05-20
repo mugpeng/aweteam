@@ -1,15 +1,35 @@
 {
   "name": "aweteam",
   "version": "0.1.0",
+  "description": "Thin tmux handoff interface for local AI coding teams",
   "type": "module",
   "bin": {
     "aweteam": "./bin/aweteam.mjs"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
+  "keywords": [
+    "ai",
+    "agent",
+    "tmux",
+    "claude",
+    "codex",
+    "multi-agent",
+    "cli"
+  ],
   "engines": {
     "node": ">=20"
+  },
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Webioinfo01/aweteam.git"
   }
 }
 
