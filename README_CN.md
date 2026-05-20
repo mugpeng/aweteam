@@ -8,12 +8,13 @@
     <strong>简体中文</strong>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.1.0-7C3AED?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.1.1-7C3AED?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/node-%E2%89%A520-0EA5E9?style=flat-square" alt="Node">
   </p>
   <p>
     <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
     <img src="https://img.shields.io/badge/provider-Claude%20%7C%20Codex-7C3AED?style=flat-square" alt="Providers">
+    <img src="https://img.shields.io/badge/install-npm-22C55E?style=flat-square" alt="npm install">
     <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
   </p>
 </div>
@@ -32,13 +33,20 @@
 
 需要 Node.js 20 或更高版本，以及 tmux。
 
-从当前仓库安装：
+通过 npm 安装：
 
 ```bash
-cd /Users/peng/Desktop/Project/Multiagent/aweteam
+npm install -g aweteam
+aweteam --help
+```
+
+或从本仓库安装（本地开发）：
+
+```bash
+git clone https://github.com/Webioinfo01/aweteam.git
+cd aweteam
 npm install
 npm link
-aweteam --help
 ```
 
 ## 快速开始
