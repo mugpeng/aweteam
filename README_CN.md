@@ -1,16 +1,27 @@
-# aweteam
+<div align="center">
+  <h1>aweteam</h1>
+  <p><strong>本地 AI coding agent 团队的轻量 tmux 交接接口。</strong></p>
+  <p>启动一个 leader，把任务分给配置好的 worker，对话保留在 tmux pane 里。</p>
+  <p>
+    <a href="./README.md">English</a> ·
+    <strong>简体中文</strong>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/version-0.1.0-7C3AED?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/node-%E2%89%A520-0EA5E9?style=flat-square" alt="Node">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
+    <img src="https://img.shields.io/badge/provider-Claude%20%7C%20Codex-7C3AED?style=flat-square" alt="Providers">
+    <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
+  </p>
+</div>
 
-`aweteam` 是一个很薄的 tmux 交接接口，用来在本机组织多个 AI coding agent。
+> 启动一个 leader，把任务分给配置好的 worker，对话保留在 tmux pane 里。
 
-它会启动一个真实的 leader CLI 到 `leader/main`，让这个 leader 从配置好的
-profile 里创建 worker pane，并把每次运行的显式记录写到
-`.aweteam/runs/<run-id>/`。
+`aweteam` 会启动一个真实的 leader CLI 到 `leader/main`，让这个 leader 从配置好的 profile 里创建 worker pane，并把每次运行的显式记录写到 `.aweteam/runs/<run-id>/`。
 
-`aweteam` 刻意保持小。它不是调度器、托管 agent 平台，也不是新的 UI。正常
-工作流仍然发生在 tmux 里：你用自然语言和 leader 对话，leader 把任务分给
-配置好的 worker，每个 worker 的对话都保留在自己的 pane 里。
-
-**语言:** [English](./README.md) | 简体中文
+它刻意保持小。它不是调度器、托管 agent 平台，也不是新的 UI。正常工作流仍然发生在 tmux 里：你用自然语言和 leader 对话，leader 把任务分给配置好的 worker，每个 worker 的对话都保留在自己的 pane 里。
 
 ## 展示
 
@@ -199,20 +210,11 @@ Claude Code 的关键环境变量：
 ```bash
 aweteam --config aweteam.json
 aweteam run "task" --config aweteam.json
-aweteam dispatch <run-id> [--once]
-aweteam spawn --run-id <run-id> --profile <name> --task-file <path>
 aweteam status <run-id>
-aweteam status <run-id> --watch
 aweteam focus <run-id> <leader|worker-name|profile>
-aweteam summarize <run-id>
-aweteam collect-summary <run-id>
 ```
 
-主要入口是 `aweteam --config aweteam.json` 和
-`aweteam run "task" --config aweteam.json`。
-
-`spawn`、`dispatch`、`summarize` 和 `collect-summary` 是底层调试或运行时内部
-命令。正常创建 worker 应该通过 leader pane 完成。
+主要入口是 `aweteam --config aweteam.json` 和 `aweteam run "task" --config aweteam.json`。
 
 从另一个终端调试：
 
@@ -234,9 +236,8 @@ worker-1    codex    done    %1    result=/path/to/result.md
 
 ## 文档
 
-- [docs/DESIGN.md](docs/DESIGN.md) 说明 runtime model、handoff protocol、
-  command semantics、config semantics 和设计约束。
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) 说明本地开发、测试和贡献约束。
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) 说明架构、本地开发、测试和贡献约束。
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) 说明发布历史。
 
 ## 开发
 

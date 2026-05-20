@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import {
   createRun,
   collectLeaderSummary,
@@ -11,6 +12,9 @@ import {
   summarizeRun,
 } from "./core.mjs";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
+
 export async function runCli({
   argv = process.argv.slice(2),
   cwd = process.cwd(),
@@ -21,6 +25,10 @@ export async function runCli({
 } = {}) {
   try {
     const command = argv[0];
+    if (command === "-v" || command === "--version") {
+      stdout(`aweteam ${version}`);
+      return 0;
+    }
     if (!command || command === "-h" || command === "--help") {
       stdout(helpText());
       return 0;
@@ -178,62 +186,18 @@ function parseSpawnArgs(args) {
 }
 
 function helpText() {
-  return `aweteam - minimal tmux handoff interface for local coding agents
+  return `Usage: aweteam [OPTIONS] COMMAND [ARGS]...
 
-Usage:
-  aweteam --config aweteam.json
-  aweteam run <task> [--config aweteam.json] [--run-id id] [--no-attach]
-  aweteam spawn --run-id id --profile name --task-file path
-  aweteam dispatch <run-id> [--once]
-  aweteam status <run-id>
-  aweteam focus <run-id> <leader|worker-name|profile>
-  aweteam summarize <run-id>
-  aweteam collect-summary <run-id>
+  Thin tmux handoff interface for local AI coding teams.
 
-Workflow:
-  1. Configure one leader and a worker pool in aweteam.json.
-  2. Start aweteam; it opens a tmux session focused on leader/main.
-  3. Tell the leader what to delegate in plain language.
-  4. aweteam creates worker panes and sends lifecycle notices back to leader/main.
-  5. Read and continue conversations in leader/worker panes; commands are for debugging.
+Options:
+  -v, --version  Show the version and exit.
+  -h, --help     Show this message and exit.
 
 Commands:
-  aweteam --config aweteam.json
-      Start a leader session with an auto-generated topic.
-
-  aweteam run <task> --config aweteam.json
-      Start a leader session with an explicit topic.
-
-  aweteam spawn --run-id <id> --profile <name> --task-file <path>
-      Debug command: create one worker pane from an allowed workers profile.
-
-  aweteam dispatch <run-id> [--once]
-      Internal dispatcher. It watches leader/outbox and creates worker panes.
-
-  aweteam status <run-id>
-      Refresh and print the run id, tmux session, leader pane, worker states, and worker panes.
-
-  aweteam status <run-id> --watch
-      Continuously refresh status for use in a tmux status pane.
-
-  aweteam focus <run-id> <leader|worker-name|profile>
-      Select the leader or worker pane inside the aweteam tmux session.
-
-  aweteam summarize <run-id>
-      Debug command: send collected worker results back to the leader pane.
-
-  aweteam collect-summary <run-id>
-      Debug command: capture the leader pane and persist it to leader/summary.md.
-
-Examples:
-  aweteam --config aweteam.json
-  aweteam run "创建三个 agent 实现登录模块" --config aweteam.json
-  aweteam status 20260506180000
-
-Config:
-  aweteam reads JSON only. A run freezes config into
-  .aweteam/runs/<run-id>/config.resolved.json, so later edits to aweteam.json do
-  not change an existing run.
+  run     Start a leader session with an explicit task.
+  status  Show run status (tmux session, leader, workers).
+  focus   Select a tmux pane inside the run session.
 `;
 }
 

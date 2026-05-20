@@ -1,17 +1,27 @@
-# aweteam
+<div align="center">
+  <h1>aweteam</h1>
+  <p><strong>Thin tmux handoff interface for local AI coding teams.</strong></p>
+  <p>Start a leader, delegate to configured workers, keep conversations visible in tmux panes.</p>
+  <p>
+    <strong>English</strong> ·
+    <a href="./README_cn.md">简体中文</a>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/version-0.1.0-7C3AED?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/node-%E2%89%A520-0EA5E9?style=flat-square" alt="Node">
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
+    <img src="https://img.shields.io/badge/provider-Claude%20%7C%20Codex-7C3AED?style=flat-square" alt="Providers">
+    <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
+  </p>
+</div>
 
-`aweteam` is a thin tmux handoff interface for local AI coding teams.
+> Start a leader, delegate to configured workers, keep conversations visible in tmux panes.
 
-It starts a real leader CLI in `leader/main`, lets that leader create worker
-panes from configured profiles, and records explicit run artifacts under
-`.aweteam/runs/<run-id>/`.
+`aweteam` starts a real leader CLI in `leader/main`, lets that leader create worker panes from configured profiles, and records explicit run artifacts under `.aweteam/runs/<run-id>/`.
 
-`aweteam` is intentionally small. It is not a scheduler, hosted agent platform,
-or replacement UI. The normal workflow stays inside tmux: you talk to the leader
-in plain language, the leader delegates to configured workers, and the worker
-conversations remain visible in their own panes.
-
-**Languages:** English | [Chinese](./README_CN.md)
+It is intentionally small. It is not a scheduler, hosted agent platform, or replacement UI. The normal workflow stays inside tmux: you talk to the leader in plain language, the leader delegates to configured workers, and the worker conversations remain visible in their own panes.
 
 ## Demo
 
@@ -205,21 +215,11 @@ Code's internal agents from substituting for aweteam workers.
 ```bash
 aweteam --config aweteam.json
 aweteam run "task" --config aweteam.json
-aweteam dispatch <run-id> [--once]
-aweteam spawn --run-id <run-id> --profile <name> --task-file <path>
 aweteam status <run-id>
-aweteam status <run-id> --watch
 aweteam focus <run-id> <leader|worker-name|profile>
-aweteam summarize <run-id>
-aweteam collect-summary <run-id>
 ```
 
-The primary entrypoints are `aweteam --config aweteam.json` and
-`aweteam run "task" --config aweteam.json`.
-
-`spawn`, `dispatch`, `summarize`, and `collect-summary` are low-level commands
-for debugging and runtime internals. Normal worker creation should happen
-through the leader pane.
+The primary entrypoints are `aweteam --config aweteam.json` and `aweteam run "task" --config aweteam.json`.
 
 Useful debugging commands from another terminal:
 
@@ -241,10 +241,8 @@ worker-1    codex    done    %1    result=/path/to/result.md
 
 ## Documentation
 
-- [docs/DESIGN.md](docs/DESIGN.md) describes the runtime model, handoff
-  protocol, command semantics, config semantics, and design constraints.
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) describes local development,
-  testing, and contribution expectations.
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) describes architecture, local development, testing, and contribution expectations.
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) describes release history.
 
 ## Development
 

@@ -32,6 +32,19 @@ async function writeConfig(dir) {
   return configPath;
 }
 
+test("version flag prints aweteam and version", async () => {
+  const output = [];
+  const exitCode = await runCli({
+    argv: ["-v"],
+    stdout: (line) => output.push(line),
+    stderr: (line) => output.push(line),
+    tmux: async () => ({ stdout: "", stderr: "", status: 0 }),
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(output.join("\n"), "aweteam 0.1.0");
+});
+
 test("run command creates a run without attaching when requested", async () => {
   const dir = await tempDir();
   const configPath = await writeConfig(dir);
@@ -58,7 +71,7 @@ test("run command creates a run without attaching when requested", async () => {
   assert.equal(runJson.task, "ship it");
 });
 
-test("help output documents workflow and examples", async () => {
+test("help output shows usage, options, and commands", async () => {
   const output = [];
   const exitCode = await runCli({
     argv: ["--help"],
@@ -69,11 +82,13 @@ test("help output documents workflow and examples", async () => {
 
   const text = output.join("\n");
   assert.equal(exitCode, 0);
-  assert.match(text, /Usage:/);
-  assert.match(text, /Workflow:/);
-  assert.match(text, /Examples:/);
-  assert.match(text, /aweteam --config aweteam.json/);
-  assert.match(text, /aweteam status <run-id>/);
+  assert.match(text, /Usage: aweteam \[OPTIONS\] COMMAND \[ARGS\]\.\.\./);
+  assert.match(text, /-v, --version/);
+  assert.match(text, /-h, --help/);
+  assert.match(text, /Commands:/);
+  assert.match(text, /\brun\b/);
+  assert.match(text, /\bstatus\b/);
+  assert.match(text, /\bfocus\b/);
 });
 
 test("default command starts a run with generated topic", async () => {
