@@ -5,7 +5,7 @@
   <p>Start a leader, delegate to configured workers, keep conversations visible in tmux panes.</p>
   <p>
     <strong>English</strong> ·
-    <a href="./README_cn.md">简体中文</a>
+    <a href="./README_CN.md">简体中文</a>
   </p>
   <p>
     <img src="https://img.shields.io/badge/version-0.1.1-7C3AED?style=flat-square" alt="Version">
