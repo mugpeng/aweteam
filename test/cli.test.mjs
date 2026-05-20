@@ -42,7 +42,7 @@ test("version flag prints aweteam and version", async () => {
   });
 
   assert.equal(exitCode, 0);
-  assert.equal(output.join("\n"), "aweteam 0.1.0");
+  assert.equal(output.join("\n"), "aweteam 0.1.1");
 });
 
 test("run command creates a run without attaching when requested", async () => {

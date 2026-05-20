@@ -1,6 +1,6 @@
 {
   "name": "aweteam",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Thin tmux handoff interface for local AI coding teams",
   "type": "module",
   "bin": {

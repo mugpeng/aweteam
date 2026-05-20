@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.1
+
+`v0.1.1` adds CI/release automation, a hero banner, and a security fix for secret exposure in process arguments.
+
+### Highlights
+
+- CI: test on ubuntu/macos with Node 20/22
+- Release: automated npm publish and GitHub Release on tag push
+- Hero banner in both READMEs
+- npm install support (`npm install -g aweteam`)
+- Fix: pass `--settings` via temp file instead of inline CLI argument to avoid secret exposure in `ps aux`
+
 ## v0.1.0
 
 `v0.1.0` is the first publishable release of aweteam. The project installs as a Node.js ESM CLI with zero external dependencies.
