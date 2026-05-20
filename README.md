@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="logo/hero.png" alt="aweteam" width="600">
-  <h1>aweteam</h1>
+  <img src="logo/hero.png" alt="aweteam" width="860">
+  <h1>aweteam: AI Coding Team Coordinator</h1>
   <p><strong>Thin tmux handoff interface for local AI coding teams.</strong></p>
   <p>Start a leader, delegate to configured workers, keep conversations visible in tmux panes.</p>
   <p>
