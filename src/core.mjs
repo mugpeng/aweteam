@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, mkdtempSync, writeFileSync } from "node:fs";
 import {
   access,
   copyFile,
@@ -9,6 +9,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -687,10 +688,18 @@ function resolveEnvValue(value, key) {
   return resolved;
 }
 
+function writeSettingsFile(data) {
+  const dir = mkdtempSync(join(tmpdir(), "aweteam-"));
+  const path = join(dir, "settings.json");
+  writeFileSync(path, JSON.stringify(data), { mode: 0o600 });
+  return path;
+}
+
 function buildCommand(profile, args) {
   const words = [shellQuote(profile.command)];
   if (profile.env && Object.keys(profile.env).length > 0) {
-    words.push("--settings", shellQuote(JSON.stringify({ env: profile.env })));
+    const settingsPath = writeSettingsFile({ env: profile.env });
+    words.push("--settings", shellQuote(settingsPath));
   }
   if (Array.isArray(args)) {
     words.push(...args.map(shellQuoteShellOperatorAware));

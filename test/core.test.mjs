@@ -155,7 +155,7 @@ test("createRun writes explicit run artifacts and leader instructions", async ()
     "leader-main",
   ]);
   assert.deepEqual(tmuxCalls[0].slice(6, 9), ["-P", "-F", "#{pane_id}"]);
-  assert.match(tmuxCalls[0][9], /^claude --settings '\{"env":\{"ANTHROPIC_MODEL":"sonnet"\}\}' --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
+  assert.match(tmuxCalls[0][9], /^claude --settings \S+ --disallowedTools Task,Edit,MultiEdit,NotebookEdit,Write --append-system-prompt /);
   assert.match(tmuxCalls[0][9], /Default worker pool:/);
   assert.deepEqual(tmuxCalls[1], [
     "pipe-pane",
@@ -266,7 +266,7 @@ test("spawnWorker starts an interactive agent pane with an assignment prompt", a
   });
 
   const split = calls.find((args) => args[0] === "split-window");
-  assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit$/);
+  assert.match(split.at(-1), /^claude --settings \S+ --disallowedTools Edit,MultiEdit,NotebookEdit$/);
   const assignmentSend = calls.find((args) => args[0] === "send-keys" && args[3] === "-l");
   assert.deepEqual(assignmentSend.slice(0, 5), ["send-keys", "-t", "%2", "-l", "--"]);
   assert.doesNotMatch(assignmentSend.at(-1), /\n/);
@@ -862,7 +862,7 @@ test("spawnWorker creates worker artifacts and tmux pane from profile", async ()
     "-F",
     "#{pane_id}",
   ]);
-  assert.match(split.at(-1), /^claude --settings '[^']+' --disallowedTools Edit,MultiEdit,NotebookEdit$/);
+  assert.match(split.at(-1), /^claude --settings \S+ --disallowedTools Edit,MultiEdit,NotebookEdit$/);
   const assignmentSend = calls.find((args) => args[0] === "send-keys" && args[3] === "-l");
   assert.doesNotMatch(assignmentSend.at(-1), /\n/);
   assert.match(assignmentSend.at(-1), /Read your task from .*task\.md\./);
