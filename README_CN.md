@@ -17,7 +17,7 @@
     <img src="https://img.shields.io/badge/install-npm-22C55E?style=flat-square" alt="npm install">
     <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
     <img src="https://img.shields.io/npm/dm/aweteam?style=flat-square" alt="npm downloads">
-    <img src="https://img.shields.io/github/stars/Webioinfo01/aweteam?style=flat-square" alt="GitHub stars">
+    <img src="https://img.shields.io/github/stars/mugpeng/aweteam?style=flat-square" alt="GitHub stars">
   </p>
 </div>
 
