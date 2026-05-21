@@ -16,6 +16,8 @@
     <img src="https://img.shields.io/badge/provider-Claude%20%7C%20Codex-7C3AED?style=flat-square" alt="Providers">
     <img src="https://img.shields.io/badge/install-npm-22C55E?style=flat-square" alt="npm install">
     <img src="https://img.shields.io/badge/platform-tmux-334155?style=flat-square" alt="Platform">
+    <img src="https://img.shields.io/npm/dm/aweteam?style=flat-square" alt="npm downloads">
+    <img src="https://img.shields.io/github/stars/Webioinfo01/aweteam?style=flat-square" alt="GitHub stars">
   </p>
 </div>
 
